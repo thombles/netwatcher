@@ -12,7 +12,9 @@ use windows::Win32::NetworkManagement::IpHelper::{
 use windows::Win32::NetworkManagement::IpHelper::{
     GAA_FLAG_SKIP_ANYCAST, GAA_FLAG_SKIP_MULTICAST, IP_ADAPTER_ADDRESSES_LH,
 };
-use windows::Win32::Networking::WinSock::{AF_INET, AF_INET6, SOCKADDR, SOCKADDR_IN, SOCKADDR_IN6};
+use windows::Win32::Networking::WinSock::{
+    AF_INET, AF_INET6, AF_UNSPEC, SOCKADDR, SOCKADDR_IN, SOCKADDR_IN6,
+};
 
 use crate::{Error, IfIndex, Interface};
 
@@ -27,7 +29,7 @@ pub(crate) fn list_interfaces() -> Result<HashMap<IfIndex, Interface>, Error> {
         loop {
             let bufptr = &mut buf[0] as *mut _ as *mut IP_ADAPTER_ADDRESSES_LH;
             let res = GetAdaptersAddresses(
-                0, /* AF_UNSPEC */
+                AF_UNSPEC.0.into(),
                 GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST,
                 None,
                 Some(bufptr),
