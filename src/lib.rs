@@ -4,7 +4,9 @@ use std::{
 };
 
 #[cfg_attr(windows, path = "imp_win.rs")]
+#[cfg_attr(target_vendor = "apple", path = "imp_mac.rs")]
 mod imp;
+mod util;
 
 type IfIndex = u32;
 
