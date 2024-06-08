@@ -12,6 +12,7 @@ use windows::Win32::NetworkManagement::IpHelper::{
 use windows::Win32::NetworkManagement::IpHelper::{
     GAA_FLAG_SKIP_ANYCAST, GAA_FLAG_SKIP_MULTICAST, IP_ADAPTER_ADDRESSES_LH,
 };
+use windows::Win32::NetworkManagement::Ndis::IfOperStatusDown;
 use windows::Win32::Networking::WinSock::{
     AF_INET, AF_INET6, AF_UNSPEC, SOCKADDR, SOCKADDR_IN, SOCKADDR_IN6,
 };
@@ -53,6 +54,10 @@ pub(crate) fn list_interfaces() -> Result<List, Error> {
         let mut adapter_ptr = &buf[0] as *const _ as *const IP_ADAPTER_ADDRESSES_LH;
         while !adapter_ptr.is_null() {
             let adapter = &*adapter_ptr as &IP_ADAPTER_ADDRESSES_LH;
+            if adapter.OperStatus == IfOperStatusDown {
+                adapter_ptr = adapter.Next;
+                continue;
+            }
             let mut hw_addr = String::with_capacity(adapter.PhysicalAddressLength as usize * 3);
             for i in 0..adapter.PhysicalAddressLength as usize {
                 if i != 0 {

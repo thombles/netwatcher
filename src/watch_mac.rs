@@ -1,10 +1,12 @@
 use crate::Update;
 
-pub struct WatchHandle;
+pub(crate) struct WatchHandle;
 
-pub fn watch_interfaces<F: FnMut(Update)>(callback: F) -> WatchHandle {
+pub(crate) fn watch_interfaces<F: FnMut(Update) + 'static>(
+    callback: F,
+) -> Result<WatchHandle, Error> {
     // stop current worker thread
     // post this into a thread that will use it
     drop(callback);
-    WatchHandle
+    Ok(WatchHandle)
 }

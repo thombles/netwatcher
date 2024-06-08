@@ -19,14 +19,14 @@ use crate::Error;
 use crate::List;
 use crate::Update;
 
-pub struct WatchState {
+struct WatchState {
     /// The last result that we captured, for diffing
     prev_list: List,
     /// User's callback
     cb: Box<dyn FnMut(Update) + 'static>,
 }
 
-pub struct WatchHandle {
+pub(crate) struct WatchHandle {
     hnd: HANDLE,
     _state: Pin<Box<Mutex<WatchState>>>,
 }
@@ -63,7 +63,7 @@ pub(crate) fn watch_interfaces<F: FnMut(Update) + 'static>(
             // Trigger an initial update.
             // This is allowed to race with true updates because it
             // will always calculate a diff and discard no-ops.
-            handle_notif(&mut *state.lock().unwrap());
+            handle_notif(&mut state.lock().unwrap());
             // Then return the handle
             Ok(WatchHandle { hnd, _state: state })
         }

@@ -5,14 +5,14 @@ use std::{
 };
 
 #[cfg_attr(windows, path = "list_win.rs")]
-#[cfg_attr(target_vendor = "apple", path = "list_mac.rs")]
+#[cfg_attr(unix, path = "list_unix.rs")]
 mod list;
 
 #[cfg_attr(windows, path = "watch_win.rs")]
 #[cfg_attr(target_vendor = "apple", path = "watch_mac.rs")]
 mod watch;
 
-#[cfg(target_vendor = "apple")]
+#[cfg(unix)]
 mod util;
 
 type IfIndex = u32;
