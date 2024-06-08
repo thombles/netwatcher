@@ -16,9 +16,9 @@ use windows::Win32::Networking::WinSock::{
     AF_INET, AF_INET6, AF_UNSPEC, SOCKADDR, SOCKADDR_IN, SOCKADDR_IN6,
 };
 
-use crate::{Error, IfIndex, Interface};
+use crate::{Error, Interface, List};
 
-pub fn list_interfaces() -> Result<HashMap<IfIndex, Interface>, Error> {
+pub(crate) fn list_interfaces() -> Result<List, Error> {
     let mut ifs = HashMap::new();
     // Microsoft recommends a 15 KB initial buffer
     let start_size = 15 * 1024;
@@ -44,7 +44,7 @@ pub fn list_interfaces() -> Result<HashMap<IfIndex, Interface>, Error> {
                 }
                 ERROR_INVALID_PARAMETER => return Err(Error::Internal),
                 ERROR_NOT_ENOUGH_MEMORY => return Err(Error::Internal),
-                ERROR_NO_DATA => return Ok(HashMap::new()), // there aren't any
+                ERROR_NO_DATA => return Ok(List(HashMap::new())), // there aren't any
                 _ => return Err(Error::Internal), // TODO: Use FormatMessage to get a string
             }
         }
@@ -98,7 +98,7 @@ pub fn list_interfaces() -> Result<HashMap<IfIndex, Interface>, Error> {
         }
     }
 
-    Ok(ifs)
+    Ok(List(ifs))
 }
 
 #[cfg(test)]
@@ -107,7 +107,7 @@ mod test {
 
     #[test]
     fn list() {
-        let ifaces = list_interfaces().unwrap();
+        let ifaces = list_interfaces().unwrap().0;
         println!("{:?}", ifaces);
     }
 }
