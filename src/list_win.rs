@@ -18,7 +18,7 @@ use windows::Win32::Networking::WinSock::{
 
 use crate::{Error, IfIndex, Interface};
 
-pub(crate) fn list_interfaces() -> Result<HashMap<IfIndex, Interface>, Error> {
+pub fn list_interfaces() -> Result<HashMap<IfIndex, Interface>, Error> {
     let mut ifs = HashMap::new();
     // Microsoft recommends a 15 KB initial buffer
     let start_size = 15 * 1024;

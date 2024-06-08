@@ -3,9 +3,14 @@ use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
 };
 
-#[cfg_attr(windows, path = "imp_win.rs")]
-#[cfg_attr(target_vendor = "apple", path = "imp_mac.rs")]
-mod imp;
+#[cfg_attr(windows, path = "list_win.rs")]
+#[cfg_attr(target_vendor = "apple", path = "list_mac.rs")]
+mod list;
+
+#[cfg_attr(windows, path = "watch_win.rs")]
+#[cfg_attr(target_vendor = "apple", path = "watch_mac.rs")]
+mod watch;
+
 mod util;
 
 type IfIndex = u32;
@@ -40,14 +45,21 @@ pub struct Update {
     pub diff: UpdateDiff,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+impl Update {
+    pub fn diff_from_previous(_prev: &Update) -> UpdateDiff {
+        // TODO: real calculation
+        UpdateDiff::default()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct UpdateDiff {
     pub added: Vec<IfIndex>,
     pub removed: Vec<IfIndex>,
     pub modified: HashMap<IfIndex, InterfaceDiff>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct InterfaceDiff {
     pub hw_addr_changed: bool,
     pub addrs_added: Vec<IpAddr>,
@@ -56,18 +68,10 @@ pub struct InterfaceDiff {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Error {
+    // TODO: handle all cases with proper sources
     Internal,
 }
 
-pub fn list_interfaces() -> Result<HashMap<IfIndex, Interface>, Error> {
-    imp::list_interfaces()
-}
+pub use list::list_interfaces;
+pub use watch::{watch_interfaces, WatchHandle};
 
-pub struct WatchHandle;
-
-pub fn watch_interfaces<F: FnMut(Update)>(callback: F) -> WatchHandle {
-    // stop current worker thread
-    // post this into a thread that will use it
-    drop(callback);
-    WatchHandle
-}
