@@ -5,8 +5,10 @@ edition = "2021"
 
 [dependencies]
 
-[target.'cfg(target_vendor = "apple")'.dependencies]
+[target.'cfg(any(target_vendor = "apple", target_os = "linux"))'.dependencies]
 nix = { version = "0.29.0", features = ["net"] }
+
+[target.'cfg(target_vendor = "apple")'.dependencies]
 block2 = "0.5.1"
 
 [target.'cfg(windows)'.dependencies.windows]

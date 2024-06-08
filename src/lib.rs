@@ -10,6 +10,7 @@ mod list;
 
 #[cfg_attr(windows, path = "watch_win.rs")]
 #[cfg_attr(target_vendor = "apple", path = "watch_mac.rs")]
+#[cfg_attr(target_os = "linux", path = "watch_linux.rs")]
 mod watch;
 
 #[cfg(unix)]
