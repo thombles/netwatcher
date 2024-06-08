@@ -1,11 +1,9 @@
 use std::fmt::Write;
 use std::{collections::HashMap, net::IpAddr};
 
-use block2::Block;
-use nix::libc::c_long;
 use nix::{ifaddrs::getifaddrs, net::if_::if_nametoindex};
 
-use crate::{Error, IfIndex, Interface};
+use crate::{Error, Interface, List};
 
 struct CandidateInterface {
     name: String,
@@ -14,7 +12,7 @@ struct CandidateInterface {
     ips: Vec<IpAddr>,
 }
 
-pub(crate) fn list_interfaces() -> Result<HashMap<IfIndex, Interface>, Error> {
+pub(crate) fn list_interfaces() -> Result<List, Error> {
     let addrs = getifaddrs().map_err(|_| Error::Internal)?;
     let mut candidates = HashMap::new();
 
@@ -59,7 +57,7 @@ pub(crate) fn list_interfaces() -> Result<HashMap<IfIndex, Interface>, Error> {
             })
         })
         .collect();
-    Ok(ifs)
+    Ok(List(ifs))
 }
 
 fn format_mac(bytes: &[u8]) -> Result<String, Error> {
