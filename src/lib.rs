@@ -13,9 +13,6 @@ mod list;
 #[cfg_attr(target_os = "linux", path = "watch_linux.rs")]
 mod watch;
 
-#[cfg(unix)]
-mod util;
-
 type IfIndex = u32;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -1,5 +1,5 @@
-use crate::Update;
 use crate::Error;
+use crate::Update;
 
 pub(crate) struct WatchHandle;
 

@@ -1,10 +1,10 @@
+use std::fmt::Write;
 use std::{collections::HashMap, net::IpAddr};
 
 use block2::Block;
 use nix::libc::c_long;
 use nix::{ifaddrs::getifaddrs, net::if_::if_nametoindex};
 
-use crate::util::format_mac;
 use crate::{Error, IfIndex, Interface};
 
 struct CandidateInterface {
@@ -62,38 +62,13 @@ pub(crate) fn list_interfaces() -> Result<HashMap<IfIndex, Interface>, Error> {
     Ok(ifs)
 }
 
-// The "objc2" project aims to provide bindings for all frameworks but Network.framework
-// isn't ready yet so let's kick it old-school
-
-struct nw_path_monitor;
-type nw_path_monitor_t = *mut nw_path_monitor;
-struct nw_path;
-type nw_path_t = *mut nw_path;
-struct dispatch_queue;
-type dispatch_queue_t = *mut dispatch_queue;
-const QOS_CLASS_BACKGROUND: usize = 0x09;
-
-#[link(name = "Network", kind = "framework")]
-extern "C" {
-    fn nw_path_monitor_create() -> nw_path_monitor_t;
-    fn nw_path_monitor_set_update_handler(
-        monitor: nw_path_monitor_t,
-        update_handler: &Block<dyn Fn(nw_path_t)>,
-    );
-    fn nw_path_monitor_set_queue(monitor: nw_path_monitor_t, queue: dispatch_queue_t);
-    fn nw_path_monitor_start(monitor: nw_path_monitor_t);
-    fn nw_path_monitor_cancel(monitor: nw_path_monitor_t);
-
-    fn dispatch_get_global_queue(identifier: usize, flag: usize) -> dispatch_queue_t;
-}
-
-#[cfg(test)]
-mod test {
-    use super::list_interfaces;
-
-    #[test]
-    fn list() {
-        let ifaces = list_interfaces().unwrap();
-        println!("{:?}", ifaces);
+fn format_mac(bytes: &[u8]) -> Result<String, Error> {
+    let mut mac = String::with_capacity(bytes.len() * 3);
+    for i in 0..bytes.len() {
+        if i != 0 {
+            write!(mac, ":").map_err(|_| Error::Internal)?;
+        }
+        write!(mac, "{:02X}", bytes[i]).map_err(|_| Error::Internal)?;
     }
+    Ok(mac)
 }
