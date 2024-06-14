@@ -81,7 +81,8 @@ unsafe extern "system" fn notif(
 ) {
     let state_ptr = ctx as *const Mutex<WatchState>;
     unsafe {
-        let state_guard = &mut *state_ptr.as_ref()
+        let state_guard = &mut *state_ptr
+            .as_ref()
             .expect("callback ctx should never be null")
             .lock()
             .unwrap();

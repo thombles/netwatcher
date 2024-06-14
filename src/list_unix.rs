@@ -62,11 +62,11 @@ pub(crate) fn list_interfaces() -> Result<List, Error> {
 
 fn format_mac(bytes: &[u8]) -> Result<String, Error> {
     let mut mac = String::with_capacity(bytes.len() * 3);
-    for i in 0..bytes.len() {
+    for (i, b) in bytes.iter().enumerate() {
         if i != 0 {
             write!(mac, ":").map_err(|_| Error::Internal)?;
         }
-        write!(mac, "{:02X}", bytes[i]).map_err(|_| Error::Internal)?;
+        write!(mac, "{:02X}", b).map_err(|_| Error::Internal)?;
     }
     Ok(mac)
 }
