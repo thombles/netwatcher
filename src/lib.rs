@@ -145,6 +145,6 @@ pub fn list_interfaces() -> Result<HashMap<IfIndex, Interface>, Error> {
 /// 
 /// The callback will fire once immediately with an initial interface list, and a diff as if
 /// there were originally no interfaces present.
-pub fn watch_interfaces<F: FnMut(Update) + 'static>(callback: F) -> Result<WatchHandle, Error> {
+pub fn watch_interfaces<F: FnMut(Update) + Send + 'static>(callback: F) -> Result<WatchHandle, Error> {
     watch::watch_interfaces(callback).map(|handle| WatchHandle { _inner: handle })
 }

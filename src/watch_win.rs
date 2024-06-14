@@ -23,7 +23,7 @@ struct WatchState {
     /// The last result that we captured, for diffing
     prev_list: List,
     /// User's callback
-    cb: Box<dyn FnMut(Update) + 'static>,
+    cb: Box<dyn FnMut(Update) + Send + 'static>,
 }
 
 pub(crate) struct WatchHandle {
@@ -39,7 +39,7 @@ impl Drop for WatchHandle {
     }
 }
 
-pub(crate) fn watch_interfaces<F: FnMut(Update) + 'static>(
+pub(crate) fn watch_interfaces<F: FnMut(Update) + Send + 'static>(
     callback: F,
 ) -> Result<WatchHandle, Error> {
     let state = Box::pin(Mutex::new(WatchState {
