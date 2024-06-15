@@ -105,14 +105,3 @@ pub(crate) fn list_interfaces() -> Result<List, Error> {
 
     Ok(List(ifs))
 }
-
-#[cfg(test)]
-mod test {
-    use super::list_interfaces;
-
-    #[test]
-    fn list() {
-        let ifaces = list_interfaces().unwrap().0;
-        println!("{:?}", ifaces);
-    }
-}
