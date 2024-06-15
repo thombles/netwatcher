@@ -60,10 +60,8 @@ pub(crate) fn watch_interfaces<F: FnMut(Update) + Send + 'static>(
     };
     match res {
         NO_ERROR => {
-            // Trigger an initial update.
-            // This is allowed to race with true updates because it
-            // will always calculate a diff and discard no-ops.
-            handle_notif(&mut state.lock().unwrap());
+            // Trigger an initial update
+            handle_notif(&mut state.lock().unwrap(), crate::list::list_interfaces()?);
             // Then return the handle
             Ok(WatchHandle { hnd, _state: state })
         }
@@ -86,14 +84,14 @@ unsafe extern "system" fn notif(
             .expect("callback ctx should never be null")
             .lock()
             .unwrap();
-        handle_notif(state_guard);
+        let Ok(new_list) = crate::list::list_interfaces() else {
+            return;
+        };
+        handle_notif(state_guard, new_list);
     }
 }
 
-fn handle_notif(state: &mut WatchState) {
-    let Ok(new_list) = crate::list::list_interfaces() else {
-        return;
-    };
+fn handle_notif(state: &mut WatchState, new_list: List) {
     if new_list == state.prev_list {
         return;
     }
