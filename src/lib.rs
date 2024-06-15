@@ -145,6 +145,13 @@ pub fn list_interfaces() -> Result<HashMap<IfIndex, Interface>, Error> {
 ///
 /// The callback will fire once immediately with an initial interface list, and a diff as if
 /// there were originally no interfaces present.
+///
+/// This function will return an error if there is a problem configuring the watcher, or if there
+/// is an error retrieving the initial interface list.
+///
+/// We assume that if listing the interfaces worked the first time, then it will continue to work
+/// for as long as the watcher is running. If listing interfaces begins to fail later, those
+/// failures will be swallowed and the callback will not be called for that change event.
 pub fn watch_interfaces<F: FnMut(Update) + Send + 'static>(
     callback: F,
 ) -> Result<WatchHandle, Error> {

@@ -51,24 +51,26 @@ fn start_watcher_thread<F: FnMut(Update) + Send + 'static>(
     bind(sockfd.as_raw_fd(), &sa_nl).map_err(|_| Error::Internal)?; // TODO: proper errors
     let (pipe_rd, pipe_wr) = pipe().map_err(|_| Error::Internal)?;
 
-    std::thread::spawn(move || {
-        let mut prev_list = List::default();
-        let mut buf = [0u8; 4096];
-        let mut handle_update = move |new_list: List| {
-            if new_list == prev_list {
-                return;
-            }
-            let update = Update {
-                interfaces: new_list.0.clone(),
-                diff: new_list.diff_from(&prev_list),
-            };
-            (callback)(update);
-            prev_list = new_list;
+    let mut prev_list = List::default();
+    let mut handle_update = move |new_list: List| {
+        if new_list == prev_list {
+            return;
+        }
+        let update = Update {
+            interfaces: new_list.0.clone(),
+            diff: new_list.diff_from(&prev_list),
         };
+        (callback)(update);
+        prev_list = new_list;
+    };
 
-        if let Ok(initial) = crate::list::list_interfaces() {
-            handle_update(initial);
-        };
+    // Now that netlink socket is open, provide an initial update.
+    // By having this outside the thread we can return an error synchronously if it
+    // looks like we're going to have trouble listing interfaces.
+    handle_update(crate::list::list_interfaces()?);
+
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 4096];
 
         loop {
             let mut fds = [
