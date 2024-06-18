@@ -4,9 +4,6 @@ use std::os::fd::OwnedFd;
 use nix::libc::poll;
 use nix::libc::pollfd;
 use nix::libc::POLLIN;
-use nix::libc::RTMGRP_IPV4_IFADDR;
-use nix::libc::RTMGRP_IPV6_IFADDR;
-use nix::libc::RTMGRP_LINK;
 use nix::sys::socket::bind;
 use nix::sys::socket::recv;
 use nix::sys::socket::socket;
@@ -21,6 +18,10 @@ use nix::unistd::pipe;
 use crate::Error;
 use crate::List;
 use crate::Update;
+
+const RTMGRP_IPV4_IFADDR: u32 = 0x10;
+const RTMGRP_IPV6_IFADDR: u32 = 0x20;
+const RTMGRP_LINK: u32 = 0x01;
 
 pub(crate) struct WatchHandle {
     // Dropping will close the fd which will be detected by poll
