@@ -10,7 +10,7 @@ mod list;
 
 #[cfg_attr(windows, path = "watch_win.rs")]
 #[cfg_attr(target_vendor = "apple", path = "watch_mac.rs")]
-#[cfg_attr(target_os = "linux", path = "watch_linux.rs")]
+#[cfg_attr(any(target_os = "linux", target_os = "android"), path = "watch_linux.rs")]
 mod watch;
 
 type IfIndex = u32;
