@@ -8,33 +8,36 @@ use crate::{Error, List, Update};
 // The "objc2" project aims to provide bindings for all frameworks but Network.framework
 // isn't ready yet so let's kick it old-school
 
-struct nw_path_monitor;
-type nw_path_monitor_t = *mut nw_path_monitor;
-struct nw_path;
-struct dispatch_queue;
-type dispatch_queue_t = *mut dispatch_queue;
+#[repr(C)]
+struct NwPathMonitor([u8; 0]);
+type NwPathMonitorT = *mut NwPathMonitor;
+#[repr(C)]
+struct NwPath([u8; 0]);
+#[repr(C)]
+struct DispatchQueue([u8; 0]);
+type DispatchQueueT = *mut DispatchQueue;
 const QOS_CLASS_BACKGROUND: usize = 0x09;
 
-unsafe impl objc2::Encode for nw_path {
+unsafe impl objc2::Encode for NwPath {
     const ENCODING: Encoding = usize::ENCODING;
 }
 
 #[link(name = "Network", kind = "framework")]
 extern "C" {
-    fn nw_path_monitor_create() -> nw_path_monitor_t;
+    fn nw_path_monitor_create() -> NwPathMonitorT;
     fn nw_path_monitor_set_update_handler(
-        monitor: nw_path_monitor_t,
-        update_handler: &Block<dyn Fn(nw_path)>,
+        monitor: NwPathMonitorT,
+        update_handler: &Block<dyn Fn(NwPath)>,
     );
-    fn nw_path_monitor_set_queue(monitor: nw_path_monitor_t, queue: dispatch_queue_t);
-    fn nw_path_monitor_start(monitor: nw_path_monitor_t);
-    fn nw_path_monitor_cancel(monitor: nw_path_monitor_t);
+    fn nw_path_monitor_set_queue(monitor: NwPathMonitorT, queue: DispatchQueueT);
+    fn nw_path_monitor_start(monitor: NwPathMonitorT);
+    fn nw_path_monitor_cancel(monitor: NwPathMonitorT);
 
-    fn dispatch_get_global_queue(identifier: usize, flag: usize) -> dispatch_queue_t;
+    fn dispatch_get_global_queue(identifier: usize, flag: usize) -> DispatchQueueT;
 }
 
 pub(crate) struct WatchHandle {
-    path_monitor: nw_path_monitor_t,
+    path_monitor: NwPathMonitorT,
 }
 
 impl Drop for WatchHandle {
@@ -57,7 +60,7 @@ pub(crate) fn watch_interfaces<F: FnMut(Update) + Send + 'static>(
     };
     // Blocks are Fn, not FnMut
     let state = Mutex::new(state);
-    let block = RcBlock::new(move |_: nw_path| {
+    let block = RcBlock::new(move |_: NwPath| {
         let mut state = state.lock().unwrap();
         let Ok(new_list) = crate::list::list_interfaces() else {
             return;
@@ -72,7 +75,7 @@ pub(crate) fn watch_interfaces<F: FnMut(Update) + Send + 'static>(
         (state.callback)(update);
         state.prev_list = new_list;
     });
-    let path_monitor: nw_path_monitor_t;
+    let path_monitor: NwPathMonitorT;
     unsafe {
         let queue = dispatch_get_global_queue(QOS_CLASS_BACKGROUND, 0);
         path_monitor = nw_path_monitor_create();
