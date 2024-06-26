@@ -22,6 +22,8 @@ unsafe impl objc2::Encode for NwPath {
     const ENCODING: Encoding = usize::ENCODING;
 }
 
+unsafe impl Send for WatchHandle {}
+
 #[link(name = "Network", kind = "framework")]
 extern "C" {
     fn nw_path_monitor_create() -> NwPathMonitorT;
