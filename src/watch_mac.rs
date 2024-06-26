@@ -42,7 +42,9 @@ pub(crate) struct WatchHandle {
 
 impl Drop for WatchHandle {
     fn drop(&mut self) {
-        unsafe { nw_path_monitor_cancel(self.path_monitor); }
+        unsafe {
+            nw_path_monitor_cancel(self.path_monitor);
+        }
     }
 }
 
@@ -83,7 +85,5 @@ pub(crate) fn watch_interfaces<F: FnMut(Update) + Send + 'static>(
         nw_path_monitor_set_queue(path_monitor, queue);
         nw_path_monitor_start(path_monitor);
     }
-    Ok(WatchHandle {
-        path_monitor,
-    })
+    Ok(WatchHandle { path_monitor })
 }

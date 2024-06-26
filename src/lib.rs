@@ -4,13 +4,18 @@ use std::{
     ops::Sub,
 };
 
+use nix::errno::Errno;
+
 #[cfg_attr(windows, path = "list_win.rs")]
 #[cfg_attr(unix, path = "list_unix.rs")]
 mod list;
 
 #[cfg_attr(windows, path = "watch_win.rs")]
 #[cfg_attr(target_vendor = "apple", path = "watch_mac.rs")]
-#[cfg_attr(any(target_os = "linux", target_os = "android"), path = "watch_linux.rs")]
+#[cfg_attr(
+    any(target_os = "linux", target_os = "android"),
+    path = "watch_linux.rs"
+)]
 mod watch;
 
 type IfIndex = u32;
@@ -71,7 +76,12 @@ pub struct InterfaceDiff {
 /// Errors in netwatcher or in one of the underlying platform integratinos.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Error {
-    // TODO: handle all cases with proper sources
+    CreateSocket(Errno),
+    Bind(Errno),
+    CreatePipe(Errno),
+    Getifaddrs(Errno),
+    GetInterfaceName(Errno),
+    FormatMacAddress,
     Internal,
 }
 

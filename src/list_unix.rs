@@ -13,11 +13,12 @@ struct CandidateInterface {
 }
 
 pub(crate) fn list_interfaces() -> Result<List, Error> {
-    let addrs = getifaddrs().map_err(|_| Error::Internal)?;
+    let addrs = getifaddrs().map_err(|e| Error::Getifaddrs(e))?;
     let mut candidates = HashMap::new();
 
     for addr in addrs {
-        let index = if_nametoindex(addr.interface_name.as_str()).map_err(|_| Error::Internal)?;
+        let index =
+            if_nametoindex(addr.interface_name.as_str()).map_err(|e| Error::GetInterfaceName(e))?;
         let candidate = candidates
             .entry(addr.interface_name.clone())
             .or_insert_with(|| CandidateInterface {
@@ -64,9 +65,9 @@ fn format_mac(bytes: &[u8]) -> Result<String, Error> {
     let mut mac = String::with_capacity(bytes.len() * 3);
     for (i, b) in bytes.iter().enumerate() {
         if i != 0 {
-            write!(mac, ":").map_err(|_| Error::Internal)?;
+            write!(mac, ":").map_err(|_| Error::FormatMacAddress)?;
         }
-        write!(mac, "{:02X}", b).map_err(|_| Error::Internal)?;
+        write!(mac, "{:02X}", b).map_err(|_| Error::FormatMacAddress)?;
     }
     Ok(mac)
 }
