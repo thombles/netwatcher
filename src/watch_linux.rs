@@ -1,5 +1,6 @@
 use std::os::fd::AsRawFd;
 use std::os::fd::OwnedFd;
+use std::sync::mpsc;
 
 use nix::libc::poll;
 use nix::libc::pollfd;
@@ -10,9 +11,9 @@ use nix::sys::socket::socket;
 use nix::sys::socket::AddressFamily;
 use nix::sys::socket::MsgFlags;
 use nix::sys::socket::NetlinkAddr;
-use nix::sys::socket::SockFlag;
 use nix::sys::socket::SockProtocol;
 use nix::sys::socket::SockType;
+use nix::sys::socket::SOCK_NONBLOCK;
 use nix::unistd::pipe;
 
 use crate::Error;
@@ -24,24 +25,37 @@ const RTMGRP_IPV6_IFADDR: u32 = 0x20;
 const RTMGRP_LINK: u32 = 0x01;
 
 pub(crate) struct WatchHandle {
-    // Dropping will close the fd which will be detected by poll
-    _pipefd: OwnedFd,
+    // Close on drop, which will be detected by poll in background thread
+    pipefd: Option<OwnedFd>,
+
+    // Detect when thread has completed
+    complete: Option<mpsc::Receiver<()>>,
+}
+
+impl Drop for WatchHandle {
+    fn drop(&mut self) {
+        drop(self.pipefd.take());
+        let _ = self.complete.take().recv();
+    }
 }
 
 pub(crate) fn watch_interfaces<F: FnMut(Update) + Send + 'static>(
     callback: F,
 ) -> Result<WatchHandle, Error> {
-    let pipefd = start_watcher_thread(callback)?;
-    Ok(WatchHandle { _pipefd: pipefd })
+    let (pipefd, complete) = start_watcher_thread(callback)?;
+    Ok(WatchHandle {
+        pipefd: Some(pipefd),
+        complete: Some(complete),
+    })
 }
 
 fn start_watcher_thread<F: FnMut(Update) + Send + 'static>(
     mut callback: F,
-) -> Result<OwnedFd, Error> {
+) -> Result<(OwnedFd, mpsc::Receiver<()>), Error> {
     let sockfd = socket(
         AddressFamily::Netlink,
         SockType::Raw,
-        SockFlag::empty(),
+        SOCK_NONBLOCK,
         Some(SockProtocol::NetlinkRoute),
     )
     .map_err(|e| Error::CreateSocket(e.to_string()))?;
@@ -70,6 +84,8 @@ fn start_watcher_thread<F: FnMut(Update) + Send + 'static>(
     // By having this outside the thread we can return an error synchronously if it
     // looks like we're going to have trouble listing interfaces.
     handle_update(crate::list::list_interfaces()?);
+
+    let (complete_tx, complete_rx) = mpsc::channel();
 
     std::thread::spawn(move || {
         let mut buf = [0u8; 4096];
@@ -104,6 +120,8 @@ fn start_watcher_thread<F: FnMut(Update) + Send + 'static>(
                 break;
             }
         }
+
+        drop(complete_tx);
     });
 
     Ok(pipe_wr)
