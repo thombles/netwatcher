@@ -5,8 +5,8 @@ fn main() {
 
     let handle = netwatcher::watch_interfaces(|update| {
         println!("Interface update!");
-        println!("State: {:?}", update.interfaces);
-        println!("Diff: {:?}", update.diff);
+        println!("State: {:#?}", update.interfaces);
+        println!("Diff: {:#?}", update.diff);
     });
 
     std::thread::sleep(Duration::from_secs(30));
