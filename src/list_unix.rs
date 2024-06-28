@@ -13,12 +13,12 @@ struct CandidateInterface {
 }
 
 pub(crate) fn list_interfaces() -> Result<List, Error> {
-    let addrs = getifaddrs().map_err(|e| Error::Getifaddrs(e))?;
+    let addrs = getifaddrs().map_err(|e| Error::Getifaddrs(e.to_string()))?;
     let mut candidates = HashMap::new();
 
     for addr in addrs {
-        let index =
-            if_nametoindex(addr.interface_name.as_str()).map_err(|e| Error::GetInterfaceName(e))?;
+        let index = if_nametoindex(addr.interface_name.as_str())
+            .map_err(|e| Error::GetInterfaceName(e.to_string()))?;
         let candidate = candidates
             .entry(addr.interface_name.clone())
             .or_insert_with(|| CandidateInterface {

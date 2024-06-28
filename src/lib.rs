@@ -4,7 +4,7 @@ use std::{
     ops::Sub,
 };
 
-use nix::errno::Errno;
+mod error;
 
 #[cfg_attr(windows, path = "list_win.rs")]
 #[cfg_attr(unix, path = "list_unix.rs")]
@@ -19,6 +19,8 @@ mod list;
 mod watch;
 
 type IfIndex = u32;
+
+pub use error::Error;
 
 /// Information about one network interface at a point in time.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -71,18 +73,6 @@ pub struct InterfaceDiff {
     pub hw_addr_changed: bool,
     pub addrs_added: Vec<IpAddr>,
     pub addrs_removed: Vec<IpAddr>,
-}
-
-/// Errors in netwatcher or in one of the underlying platform integratinos.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Error {
-    CreateSocket(Errno),
-    Bind(Errno),
-    CreatePipe(Errno),
-    Getifaddrs(Errno),
-    GetInterfaceName(Errno),
-    FormatMacAddress,
-    Internal,
 }
 
 #[derive(Default, PartialEq, Eq)]

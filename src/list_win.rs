@@ -38,15 +38,15 @@ pub(crate) fn list_interfaces() -> Result<List, Error> {
             );
             match WIN32_ERROR(res) {
                 ERROR_SUCCESS => break,
-                ERROR_ADDRESS_NOT_ASSOCIATED => return Err(Error::Internal),
+                ERROR_ADDRESS_NOT_ASSOCIATED => return Err(Error::AddressNotAssociated),
                 ERROR_BUFFER_OVERFLOW => {
                     buf.resize(sizepointer as usize, 0);
                     continue;
                 }
-                ERROR_INVALID_PARAMETER => return Err(Error::Internal),
-                ERROR_NOT_ENOUGH_MEMORY => return Err(Error::Internal),
+                ERROR_INVALID_PARAMETER => return Err(Error::InvalidParameter),
+                ERROR_NOT_ENOUGH_MEMORY => return Err(Error::NotEnoughMemory),
                 ERROR_NO_DATA => return Ok(List(HashMap::new())), // there aren't any
-                _ => return Err(Error::Internal), // TODO: Use FormatMessage to get a string
+                _ => return Err(Error::UnexpectedWindowsResult(res)),
             }
         }
 
@@ -61,10 +61,10 @@ pub(crate) fn list_interfaces() -> Result<List, Error> {
             let mut hw_addr = String::with_capacity(adapter.PhysicalAddressLength as usize * 3);
             for i in 0..adapter.PhysicalAddressLength as usize {
                 if i != 0 {
-                    write!(hw_addr, ":").map_err(|_| Error::Internal)?;
+                    write!(hw_addr, ":").map_err(|_| Error::FormatMacAddress)?;
                 }
                 write!(hw_addr, "{:02X}", adapter.PhysicalAddress[i])
-                    .map_err(|_| Error::Internal)?;
+                    .map_err(|_| Error::FormatMacAddress)?;
             }
             let mut ips = vec![];
             let mut unicast_ptr = adapter.FirstUnicastAddress;

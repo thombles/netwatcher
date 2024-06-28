@@ -44,14 +44,14 @@ fn start_watcher_thread<F: FnMut(Update) + Send + 'static>(
         SockFlag::empty(),
         Some(SockProtocol::NetlinkRoute),
     )
-    .map_err(|e| Error::CreateSocket(e))?;
-    // TODO: set nonblocking
+    .map_err(|e| Error::CreateSocket(e.to_string()))?;
+    sockfd.set_nonblocking(true);
     let sa_nl = NetlinkAddr::new(
         0,
         (RTMGRP_LINK | RTMGRP_IPV4_IFADDR | RTMGRP_IPV6_IFADDR) as u32,
     );
-    bind(sockfd.as_raw_fd(), &sa_nl).map_err(|e| Error::Bind(e))?;
-    let (pipe_rd, pipe_wr) = pipe().map_err(|e| Error::CreatePipe(e))?;
+    bind(sockfd.as_raw_fd(), &sa_nl).map_err(|e| Error::Bind(e.to_string()))?;
+    let (pipe_rd, pipe_wr) = pipe().map_err(|e| Error::CreatePipe(e.to_string()))?;
 
     let mut prev_list = List::default();
     let mut handle_update = move |new_list: List| {
