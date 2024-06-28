@@ -11,9 +11,9 @@ use nix::sys::socket::socket;
 use nix::sys::socket::AddressFamily;
 use nix::sys::socket::MsgFlags;
 use nix::sys::socket::NetlinkAddr;
+use nix::sys::socket::SockFlag;
 use nix::sys::socket::SockProtocol;
 use nix::sys::socket::SockType;
-use nix::sys::socket::SOCK_NONBLOCK;
 use nix::unistd::pipe;
 
 use crate::Error;
@@ -35,7 +35,7 @@ pub(crate) struct WatchHandle {
 impl Drop for WatchHandle {
     fn drop(&mut self) {
         drop(self.pipefd.take());
-        let _ = self.complete.take().recv();
+        let _ = self.complete.take().unwrap().recv();
     }
 }
 
@@ -55,11 +55,10 @@ fn start_watcher_thread<F: FnMut(Update) + Send + 'static>(
     let sockfd = socket(
         AddressFamily::Netlink,
         SockType::Raw,
-        SOCK_NONBLOCK,
+        SockFlag::SOCK_NONBLOCK,
         Some(SockProtocol::NetlinkRoute),
     )
     .map_err(|e| Error::CreateSocket(e.to_string()))?;
-    sockfd.set_nonblocking(true);
     let sa_nl = NetlinkAddr::new(
         0,
         (RTMGRP_LINK | RTMGRP_IPV4_IFADDR | RTMGRP_IPV6_IFADDR) as u32,
@@ -124,5 +123,5 @@ fn start_watcher_thread<F: FnMut(Update) + Send + 'static>(
         drop(complete_tx);
     });
 
-    Ok(pipe_wr)
+    Ok((pipe_wr, complete_rx))
 }
