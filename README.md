@@ -5,7 +5,7 @@
 
 `netwatcher` is a cross-platform Rust library for enumerating network interfaces and their IP addresses, featuring the ability to watch for changes to those interfaces _efficiently_. It uses platform-specific methods to detect when interface changes have occurred instead of polling, which means that you find out about changes more quickly and there is no CPU or wakeup overhead when nothing is happening.
 
-## Current platform suport
+## Current platform support
 
 | Platform | Min Version | List | Watch | Notes                                                                                 |
 |----------|-------------|------|-------|---------------------------------------------------------------------------------------|
