@@ -1,7 +1,7 @@
 # netwatcher
 
-![Crates.io Version](https://img.shields.io/crates/v/netwatcher)
-![docs.rs](https://img.shields.io/docsrs/netwatcher)
+[![Crates.io Version](https://img.shields.io/crates/v/netwatcher)](https://crates.io/crate/netwatcher)
+[![docs.rs](https://img.shields.io/docsrs/netwatcher)](https://docs.rs/netwatcher)
 
 `netwatcher` is a cross-platform Rust library for enumerating network interfaces and their IP addresses, featuring the ability to watch for changes to those interfaces _efficiently_. It uses platform-specific methods to detect when interface changes have occurred instead of polling, which means that you find out about changes more quickly and there is no CPU or wakeup overhead when nothing is happening.
 
