@@ -65,10 +65,10 @@ pub(crate) fn watch_interfaces<F: FnMut(Update) + Send + 'static>(
             // Then return the handle
             Ok(WatchHandle { hnd, _state: state })
         }
-        ERROR_INVALID_HANDLE => Err(Error::Internal),
-        ERROR_INVALID_PARAMETER => Err(Error::Internal),
-        ERROR_NOT_ENOUGH_MEMORY => Err(Error::Internal),
-        _ => Err(Error::Internal), // TODO: Use FormatMessage and get real error
+        ERROR_INVALID_HANDLE => Err(Error::InvalidHandle),
+        ERROR_INVALID_PARAMETER => Err(Error::InvalidParameter),
+        ERROR_NOT_ENOUGH_MEMORY => Err(Error::NotEnoughMemory),
+        _ => Err(Error::UnexpectedWindowsResult(res.0)),
     }
 }
 
