@@ -48,7 +48,7 @@ cargo {
     module = "../app-native"
     libname = "netwatcher_app_native"
     targets = listOf("arm64", "arm", "x86", "x86_64")
-    profile = "debug"
+    profile = "release"
 }
 
 tasks.whenTaskAdded {
