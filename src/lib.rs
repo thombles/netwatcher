@@ -5,9 +5,9 @@
 //! _efficiently_. It uses platform-specific methods to detect when interface changes
 //! have occurred instead of polling, which means that you find out about changes more
 //! quickly and there is no CPU or wakeup overhead when nothing is happening.
-//! 
+//!
 //! ## List example
-//! 
+//!
 //! ```
 //! /// Returns a HashMap from ifindex (a `u32`) to an `Interface` struct
 //! let interfaces = netwatcher::list_interfaces().unwrap();
@@ -15,16 +15,16 @@
 //!     println!("interface {} has {} IPs", i.name, i.ips.len());
 //! }
 //! ```
-//! 
+//!
 //! ## Watch example
-//! 
+//!
 //! ```
 //! let handle = netwatcher::watch_interfaces(|update| {
 //!     // This callback will fire once immediately with the existing state
-//! 
+//!
 //!     // Update includes the latest snapshot of all interfaces
 //!     println!("Current interface map: {:#?}", update.interfaces);
-//! 
+//!
 //!     // The `UpdateDiff` describes changes since previous callback
 //!     // You can choose whether to use the snapshot, diff, or both
 //!     println!("ifindexes added: {:?}", update.diff.added);
@@ -52,17 +52,21 @@ mod error;
 #[cfg_attr(unix, path = "list_unix.rs")]
 mod list;
 
+#[cfg(target_os = "android")]
+mod android;
+
 #[cfg_attr(windows, path = "watch_win.rs")]
 #[cfg_attr(target_vendor = "apple", path = "watch_mac.rs")]
-#[cfg_attr(
-    any(target_os = "linux", target_os = "android"),
-    path = "watch_linux.rs"
-)]
+#[cfg_attr(target_os = "linux", path = "watch_linux.rs")]
+#[cfg_attr(target_os = "android", path = "watch_android.rs")]
 mod watch;
 
 type IfIndex = u32;
 
 pub use error::Error;
+
+#[cfg(target_os = "android")]
+pub use android::set_android_context;
 
 /// Information about one network interface at a point in time.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -44,18 +44,18 @@ pub(crate) fn list_interfaces() -> Result<List, Error> {
 
     let ifs = candidates
         .drain()
-        .flat_map(|(_, c)| {
-            c.hw_addr.map(|hw_addr| {
-                (
-                    c.index,
-                    Interface {
-                        index: c.index,
-                        hw_addr,
-                        name: c.name,
-                        ips: c.ips,
-                    },
-                )
-            })
+        .map(|(_, c)| {
+            // suppressed on Android
+            let hw_addr = c.hw_addr.unwrap_or_else(|| "00:00:00:00:00:00".to_string());
+            (
+                c.index,
+                Interface {
+                    index: c.index,
+                    hw_addr,
+                    name: c.name,
+                    ips: c.ips,
+                },
+            )
         })
         .collect();
     Ok(List(ifs))

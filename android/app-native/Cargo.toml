@@ -1,0 +1,13 @@
+[package]
+name = "netwatcher-app-native"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+netwatcher = { path = "../.." }
+jni = "0.21.1"
+android_logger = "0.13"
+log = "0.4"

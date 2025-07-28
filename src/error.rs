@@ -13,6 +13,8 @@ pub enum Error {
     InvalidParameter,
     NotEnoughMemory,
     InvalidHandle,
+    NoAndroidContext,
+    Jni(String),
 }
 
 impl std::fmt::Display for Error {
@@ -22,3 +24,10 @@ impl std::fmt::Display for Error {
 }
 
 impl std::error::Error for Error {}
+
+#[cfg(target_os = "android")]
+impl From<jni::errors::Error> for Error {
+    fn from(err: jni::errors::Error) -> Self {
+        Error::Jni(err.to_string())
+    }
+}
