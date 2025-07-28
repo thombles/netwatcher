@@ -122,6 +122,9 @@ pub extern "C" fn netwatcher_interfaces_did_change() {
         return;
     };
     let mut state = state_ref.lock().unwrap();
+    if new_list == state.current_interfaces {
+        return;
+    }
     let diff = new_list.diff_from(&state.current_interfaces);
     let update = Update {
         interfaces: new_list.0.clone(),
