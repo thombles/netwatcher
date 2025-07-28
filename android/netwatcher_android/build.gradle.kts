@@ -1,5 +1,6 @@
 plugins {
     alias(libs.plugins.android.library)
+    id("com.vanniktech.maven.publish") version "0.34.0"
 }
 
 android {
@@ -8,7 +9,6 @@ android {
 
     defaultConfig {
         minSdk = 21
-        version = "0.2.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         consumerProguardFiles("consumer-rules.pro")
@@ -42,10 +42,41 @@ android {
 }
 
 dependencies {
-
     implementation(libs.androidx.appcompat)
     implementation(libs.material)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
+}
+
+// Maven Central publishing configuration
+mavenPublishing {
+    publishToMavenCentral()
+    signAllPublications()
+    coordinates("net.octet-stream.netwatcher", "netwatcher-android", "0.2.0")
+    pom {
+        name = "Netwatcher"
+        description = "Android support library for netwatcher Rust crate"
+        inceptionYear = "2025"
+        url = "https://github.com/thombles/netwatcher/"
+        licenses {
+            license {
+                name = "MIT License"
+                url = "https://opensource.org/licenses/MIT"
+                distribution = "https://opensource.org/licenses/MIT"
+            }
+        }
+        developers {
+            developer {
+                id = "thombles"
+                name = "Thomas Karpiniec"
+                url = "https://github.com/thombles/"
+            }
+        }
+        scm {
+            url = "https://github.com/thombles/netwatcher/"
+            connection = "scm:git:https://github.com/thombles/netwatcher.git"
+            developerConnection = "scm:git:https://github.com/thombles/netwatcher.git"
+        }
+    }
 }
