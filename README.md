@@ -55,7 +55,7 @@ drop(handle);
 
 Security/privacy restrictions in Android mean that we can't use the standard Linux approach when watching for network interface changes. Unfortunately, the way we are allowed to do this is inaccessible to native code. Even using JNI it is not possible to directly construct the types required to work with Android's connectivity API. All is not lost, however: I have published some support code on Maven Central which `netwatcher` can hook into in order to get the information it needs.
 
-Add the Java support library with the matching version to your app's `build.gradle.kts`. The following snippet will work but probably you will want to follow the `libs.versions.toml` pattern.
+Add the Java support library with the matching version to your app's `build.gradle.kts`. The following snippet will work but probably you will want to follow the `libs.versions.toml` pattern. Make sure you have the Maven Central repository enabled.
 
 ```
 dependencies {
