@@ -106,7 +106,7 @@ fn format_interfaces(interfaces: &HashMap<u32, Interface>) -> String {
         return result;
     }
 
-    for (index, interface) in interfaces {
+    for (_index, interface) in interfaces {
         result.push_str(&format!("{}:\n", interface.name));
 
         if interface.ips.is_empty() {
