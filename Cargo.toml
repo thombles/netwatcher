@@ -9,6 +9,9 @@ readme = "README.md"
 authors = ["Thomas Karpiniec <tom.karpiniec@outlook.com>"]
 keywords = ["interfaces", "ip", "adapter"]
 categories = ["network-programming"]
+exclude = [
+    "android/*",
+]
 
 [dependencies]
 
