@@ -13,7 +13,7 @@
 | Mac      | 10.14       | ✅    | ✅     |                                                                                       |
 | Linux    | -           | ✅    | ✅     | Creates a background thread                                                           |
 | iOS      | 12.0        | ✅    | ✅     |                                                                                       |
-| Android  | 5.0         | ✅    | ✅     | Watch support requires extra setup. See Android Setup instruction below.              |
+| Android  | 8.0         | ✅    | ✅     | Watch support requires extra setup. See Android Setup instruction below.              |
 
 ## Usage
 
@@ -53,16 +53,6 @@ drop(handle);
 
 ### Android Setup
 
-Security/privacy restrictions in Android mean that we can't use the standard Linux approach when watching for network interface changes. Unfortunately, the way we are allowed to do this is inaccessible to native code. Even using JNI it is not possible to directly construct the types required to work with Android's connectivity API. All is not lost, however: I have published some support code on Maven Central which `netwatcher` can hook into in order to get the information it needs.
-
-Add the Java support library with the matching version to your app's `build.gradle.kts`. The following snippet will work but probably you will want to follow the `libs.versions.toml` pattern. Make sure you have the Maven Central repository enabled.
-
-```
-dependencies {
-    implementation("net.octet-stream.netwatcher:netwatcher-android:0.2.0")
-}
-```
-
 Ensure the app module which is going to end up running `netwatcher` has these permissions:
 
 ```xml
@@ -70,7 +60,7 @@ Ensure the app module which is going to end up running `netwatcher` has these pe
     <uses-permission android:name="android.permission.INTERNET" />
 ```
 
-Finally, you will need to make sure that `netwatcher` gets access to the android context. There is built-in support for the [ndk-context](https://crates.io/crates/ndk-context) crate. What this means is that if you're using certain frameworks for building all-Rust Android apps then it will be able to pick up the context automatically. In other situations, the Rust code in your app will have to call `netwatcher::set_android_context`.
+You will also need to make sure that `netwatcher` gets access to the Android app's `Context`. There is built-in support for the [ndk-context](https://crates.io/crates/ndk-context) crate. What this means is that if you're using certain frameworks for building all-Rust Android apps then it will be able to pick up the context automatically. In other situations, the Rust code in your app will have to call `netwatcher::set_android_context`.
 
 There is a test app included in the repo that provides a full example. [MainActivity.kt](https://github.com/thombles/netwatcher/blob/main/android/app/src/main/java/net/octet_stream/netwatcher/netwatchertestapp/MainActivity.kt) is an activity with some methods defined in Rust. [app-native/src/lib.rs](https://github.com/thombles/netwatcher/blob/main/android/app-native/src/lib.rs) provides the native implementations of those methods. This includes an example of calling `set_android_context`, and using the `netwatcher` library to watch for interface changes, passing the results back to the Java GUI.
 

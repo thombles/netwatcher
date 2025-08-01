@@ -1,8 +1,13 @@
 use crate::{list, Error, List, Update};
-use jni::JavaVM;
+use jni::objects::{JClass, JObject};
+use jni::sys::{jint, JNINativeMethod};
+use jni::{JNIEnv, JavaVM};
 use std::collections::HashMap;
 use std::sync::OnceLock;
 use std::sync::{Arc, Mutex};
+
+// Include the DEX file built by build.rs
+const NETWATCHER_DEX_BYTES: &[u8] = include_bytes!(env!("NETWATCHER_DEX_PATH"));
 
 static STATE: OnceLock<Arc<Mutex<State>>> = OnceLock::new();
 
@@ -75,31 +80,84 @@ pub(crate) fn watch_interfaces<F: FnMut(Update) + Send + 'static>(
 fn start_java_watching(state: &mut State) -> Result<(), Error> {
     let (vm_ptr, context_ptr) = crate::android::android_ctx().ok_or(Error::NoAndroidContext)?;
     let jvm = unsafe { JavaVM::from_raw(vm_ptr as *mut jni::sys::JavaVM)? };
-    let support_object = {
+
+    let (support_object) = {
         let mut env = jvm.attach_current_thread()?;
-        let class_name = "net/octet_stream/netwatcher/netwatcher_android/NetwatcherAndroidSupport";
-        let support_class = env.find_class(class_name)?;
-        let constructor_sig = "(Landroid/content/Context;)V";
-        let context_obj =
-            unsafe { jni::objects::JObject::from_raw(context_ptr as jni::sys::jobject) };
-        let support_object =
-            env.new_object(&support_class, constructor_sig, &[(&context_obj).into()])?;
-        let global_ref = env.new_global_ref(support_object)?;
-        let callback_ptr = netwatcher_interfaces_did_change as *const () as jni::sys::jlong;
-        env.call_method(
-            &global_ref,
-            "startInterfaceWatch",
-            "(J)V",
-            &[jni::objects::JValue::Long(callback_ptr)],
+        let support_class = inject_dex_class(&mut env)?;
+        let context_obj = unsafe { JObject::from_raw(context_ptr as jni::sys::jobject) };
+        let support_object = env.new_object(
+            &support_class,
+            "(Landroid/content/Context;)V",
+            &[(&context_obj).into()],
         )?;
+        let global_ref = env.new_global_ref(support_object)?;
+        env.call_method(&global_ref, "startInterfaceWatch", "()V", &[])?;
         global_ref
     };
+
     let java_support = JavaSupport {
         jvm,
         support_object,
     };
     state.java_support = Some(java_support);
     Ok(())
+}
+
+fn inject_dex_class<'a>(env: &mut JNIEnv<'a>) -> Result<JClass<'a>, Error> {
+    let (_, context_ptr) = crate::android::android_ctx().ok_or(Error::NoAndroidContext)?;
+    let context_obj = unsafe { JObject::from_raw(context_ptr as jni::sys::jobject) };
+    let byte_buffer = unsafe {
+        env.new_direct_byte_buffer(
+            NETWATCHER_DEX_BYTES.as_ptr() as *mut u8,
+            NETWATCHER_DEX_BYTES.len(),
+        )?
+    };
+
+    // API 26+
+    let in_memory_class = env.find_class("dalvik/system/InMemoryDexClassLoader")?;
+    let parent_loader = env.call_method(
+        &context_obj,
+        "getClassLoader",
+        "()Ljava/lang/ClassLoader;",
+        &[],
+    )?;
+    let dex_loader = env.new_object(
+        &in_memory_class,
+        "(Ljava/nio/ByteBuffer;Ljava/lang/ClassLoader;)V",
+        &[(&byte_buffer).into(), (&parent_loader.l()?).into()],
+    )?;
+
+    // Load the support class and register native methods
+    let class_name_str = env.new_string("net.octet_stream.netwatcher.NetwatcherSupportAndroid")?;
+    let support_class_obj = env.call_method(
+        &dex_loader,
+        "loadClass",
+        "(Ljava/lang/String;)Ljava/lang/Class;",
+        &[(&class_name_str).into()],
+    )?;
+    let support_class: JClass = support_class_obj.l()?.into();
+
+    let native_methods = [JNINativeMethod {
+        name: b"netwatcherInterfacesDidChange\0".as_ptr() as *mut std::os::raw::c_char,
+        signature: b"()V\0".as_ptr() as *mut std::os::raw::c_char,
+        fnPtr:
+            Java_net_octet_1stream_netwatcher_NetwatcherSupportAndroid_netwatcherInterfacesDidChange
+                as *mut std::ffi::c_void,
+    }];
+
+    let result = unsafe {
+        (**env.get_raw()).RegisterNatives.unwrap()(
+            env.get_raw(),
+            support_class.as_raw(),
+            native_methods.as_ptr(),
+            native_methods.len() as jint,
+        )
+    };
+    if result != 0 {
+        return Err(Error::Jni("Failed to register native methods".to_string()));
+    }
+
+    Ok(support_class)
 }
 
 fn stop_java_watching(java_support: &JavaSupport) -> Result<(), Error> {
@@ -114,7 +172,10 @@ fn stop_java_watching(java_support: &JavaSupport) -> Result<(), Error> {
 }
 
 #[no_mangle]
-pub extern "C" fn netwatcher_interfaces_did_change() {
+pub extern "C" fn Java_net_octet_1stream_netwatcher_NetwatcherSupportAndroid_netwatcherInterfacesDidChange(
+    _env: JNIEnv,
+    _class: JClass,
+) {
     let Some(state_ref) = STATE.get() else {
         return;
     };

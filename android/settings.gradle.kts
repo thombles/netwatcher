@@ -21,4 +21,3 @@ dependencyResolutionManagement {
 
 rootProject.name = "NetwatcherTestApp"
 include(":app")
-include(":netwatcher_android")
