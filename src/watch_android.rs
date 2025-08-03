@@ -81,7 +81,7 @@ fn start_java_watching(state: &mut State) -> Result<(), Error> {
     let (vm_ptr, context_ptr) = crate::android::android_ctx().ok_or(Error::NoAndroidContext)?;
     let jvm = unsafe { JavaVM::from_raw(vm_ptr as *mut jni::sys::JavaVM)? };
 
-    let (support_object) = {
+    let support_object = {
         let mut env = jvm.attach_current_thread()?;
         let support_class = inject_dex_class(&mut env)?;
         let context_obj = unsafe { JObject::from_raw(context_ptr as jni::sys::jobject) };
