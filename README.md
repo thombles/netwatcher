@@ -13,7 +13,7 @@
 | Mac      | 10.14       | ✅    | ✅     |                                                                                       |
 | Linux    | -           | ✅    | ✅     | Creates a background thread                                                           |
 | iOS      | 12.0        | ✅    | ✅     |                                                                                       |
-| Android  | 8.0         | ✅    | ✅     | Watch support requires extra setup. See Android Setup instruction below.              |
+| Android  | 5.0         | ✅    | ✅     | Watch support requires extra setup. See Android Setup instruction below.              |
 
 ## Usage
 

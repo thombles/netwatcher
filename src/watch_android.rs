@@ -1,8 +1,9 @@
 use crate::{list, Error, List, Update};
 use jni::objects::{JClass, JObject};
-use jni::sys::{jint, JNINativeMethod};
-use jni::{JNIEnv, JavaVM};
+use jni::{JNIEnv, JavaVM, NativeMethod};
 use std::collections::HashMap;
+use std::fs;
+use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::sync::{Arc, Mutex};
 
@@ -106,28 +107,47 @@ fn start_java_watching(state: &mut State) -> Result<(), Error> {
 fn inject_dex_class<'a>(env: &mut JNIEnv<'a>) -> Result<JClass<'a>, Error> {
     let (_, context_ptr) = crate::android::android_ctx().ok_or(Error::NoAndroidContext)?;
     let context_obj = unsafe { JObject::from_raw(context_ptr as jni::sys::jobject) };
-    let byte_buffer = unsafe {
-        env.new_direct_byte_buffer(
-            NETWATCHER_DEX_BYTES.as_ptr() as *mut u8,
-            NETWATCHER_DEX_BYTES.len(),
-        )?
-    };
 
-    // API 26+
-    let in_memory_class = env.find_class("dalvik/system/InMemoryDexClassLoader")?;
+    // to enable backwards compat to API level 21, write to disk instead of loading in-memory
+    let cache_dir = env.call_method(&context_obj, "getCodeCacheDir", "()Ljava/io/File;", &[])?;
+    let cache_dir_path = env.call_method(
+        &cache_dir.l()?,
+        "getAbsolutePath",
+        "()Ljava/lang/String;",
+        &[],
+    )?;
+    let cache_dir_jstring = cache_dir_path.l()?;
+    let cache_dir_rust: String = env.get_string(&cache_dir_jstring.into())?.into();
+    let temp_dex_path = PathBuf::from(cache_dir_rust.clone()).join("netwatcher.dex");
+    fs::write(&temp_dex_path, NETWATCHER_DEX_BYTES)?;
+
+    // dex file must not be writable or it won't be loaded
+    let mut perms = fs::metadata(&temp_dex_path)?.permissions();
+    perms.set_readonly(true);
+    fs::set_permissions(&temp_dex_path, perms)?;
+
+    let dex_class_loader_class = env.find_class("dalvik/system/DexClassLoader")?;
     let parent_loader = env.call_method(
         &context_obj,
         "getClassLoader",
         "()Ljava/lang/ClassLoader;",
         &[],
     )?;
+
+    let temp_dex_path_str = temp_dex_path.to_string_lossy().to_string();
+    let temp_dex_path_jstring = env.new_string(&temp_dex_path_str)?;
+    let cache_dir_jstring = env.new_string(&cache_dir_rust)?;
     let dex_loader = env.new_object(
-        &in_memory_class,
-        "(Ljava/nio/ByteBuffer;Ljava/lang/ClassLoader;)V",
-        &[(&byte_buffer).into(), (&parent_loader.l()?).into()],
+        &dex_class_loader_class,
+        "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/ClassLoader;)V",
+        &[
+            (&temp_dex_path_jstring).into(),
+            (&cache_dir_jstring).into(),
+            (&JObject::null()).into(),
+            (&parent_loader.l()?).into(),
+        ],
     )?;
 
-    // Load the support class and register native methods
     let class_name_str = env.new_string("net.octet_stream.netwatcher.NetwatcherSupportAndroid")?;
     let support_class_obj = env.call_method(
         &dex_loader,
@@ -136,26 +156,16 @@ fn inject_dex_class<'a>(env: &mut JNIEnv<'a>) -> Result<JClass<'a>, Error> {
         &[(&class_name_str).into()],
     )?;
     let support_class: JClass = support_class_obj.l()?.into();
+    let _ = fs::remove_file(&temp_dex_path);
 
-    let native_methods = [JNINativeMethod {
-        name: b"netwatcherInterfacesDidChange\0".as_ptr() as *mut std::os::raw::c_char,
-        signature: b"()V\0".as_ptr() as *mut std::os::raw::c_char,
-        fnPtr:
+    let native_methods = [NativeMethod {
+        name: "netwatcherInterfacesDidChange".into(),
+        sig: "()V".into(),
+        fn_ptr:
             Java_net_octet_1stream_netwatcher_NetwatcherSupportAndroid_netwatcherInterfacesDidChange
-                as *mut std::ffi::c_void,
+                as *mut _,
     }];
-
-    let result = unsafe {
-        (**env.get_raw()).RegisterNatives.unwrap()(
-            env.get_raw(),
-            support_class.as_raw(),
-            native_methods.as_ptr(),
-            native_methods.len() as jint,
-        )
-    };
-    if result != 0 {
-        return Err(Error::Jni("Failed to register native methods".to_string()));
-    }
+    env.register_native_methods(&support_class, &native_methods)?;
 
     Ok(support_class)
 }
