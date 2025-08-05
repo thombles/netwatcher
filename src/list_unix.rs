@@ -3,13 +3,13 @@ use std::{collections::HashMap, net::IpAddr};
 
 use nix::{ifaddrs::getifaddrs, net::if_::if_nametoindex};
 
-use crate::{Error, Interface, List};
+use crate::{Error, Interface, IpRecord, List};
 
 struct CandidateInterface {
     name: String,
     index: u32,
     hw_addr: Option<String>,
-    ips: Vec<IpAddr>,
+    ips: Vec<IpRecord>,
 }
 
 pub(crate) fn list_interfaces() -> Result<List, Error> {
@@ -34,10 +34,24 @@ pub(crate) fn list_interfaces() -> Result<List, Error> {
                 }
             }
             if let Some(a) = a.as_sockaddr_in() {
-                candidate.ips.push(IpAddr::V4(a.ip()));
+                let ip = IpAddr::V4(a.ip());
+                if let Some(prefix_len) = addr.netmask.and_then(|netmask| {
+                    netmask
+                        .as_sockaddr_in()
+                        .map(|netmask_in| netmask_in.ip().to_bits().leading_ones() as u8)
+                }) {
+                    candidate.ips.push(IpRecord { ip, prefix_len });
+                }
             }
             if let Some(a) = a.as_sockaddr_in6() {
-                candidate.ips.push(IpAddr::V6(a.ip()));
+                let ip = IpAddr::V6(a.ip());
+                if let Some(prefix_len) = addr.netmask.and_then(|netmask| {
+                    netmask
+                        .as_sockaddr_in6()
+                        .map(|netmask_in6| netmask_in6.ip().to_bits().leading_ones() as u8)
+                }) {
+                    candidate.ips.push(IpRecord { ip, prefix_len });
+                }
             }
         }
     }

@@ -12,7 +12,10 @@
 //! /// Returns a HashMap from ifindex (a `u32`) to an `Interface` struct
 //! let interfaces = netwatcher::list_interfaces().unwrap();
 //! for i in interfaces.values() {
-//!     println!("interface {} has {} IPs", i.name, i.ips.len());
+//!     println!("interface {}", i.name);
+//!     for ip_record in &i.ips {
+//!         println!("IP: {}/{}", ip_record.ip, ip_record.prefix_len);
+//!     }
 //! }
 //! ```
 //!
@@ -68,29 +71,36 @@ pub use error::Error;
 #[cfg(target_os = "android")]
 pub use android::set_android_context;
 
+/// An IP address paired with its prefix length (network mask).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct IpRecord {
+    pub ip: IpAddr,
+    pub prefix_len: u8,
+}
+
 /// Information about one network interface at a point in time.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Interface {
     pub index: u32,
     pub name: String,
     pub hw_addr: String,
-    pub ips: Vec<IpAddr>,
+    pub ips: Vec<IpRecord>,
 }
 
 impl Interface {
     /// Helper to iterate over only the IPv4 addresses on this interface.
     pub fn ipv4_ips(&self) -> impl Iterator<Item = &Ipv4Addr> {
-        self.ips.iter().filter_map(|ip| match ip {
-            IpAddr::V4(v4) => Some(v4),
+        self.ips.iter().filter_map(|ip_record| match ip_record.ip {
+            IpAddr::V4(ref v4) => Some(v4),
             IpAddr::V6(_) => None,
         })
     }
 
     /// Helper to iterate over only the IPv6 addresses on this interface.
     pub fn ipv6_ips(&self) -> impl Iterator<Item = &Ipv6Addr> {
-        self.ips.iter().filter_map(|ip| match ip {
+        self.ips.iter().filter_map(|ip_record| match ip_record.ip {
             IpAddr::V4(_) => None,
-            IpAddr::V6(v6) => Some(v6),
+            IpAddr::V6(ref v6) => Some(v6),
         })
     }
 }
@@ -117,8 +127,8 @@ pub struct UpdateDiff {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct InterfaceDiff {
     pub hw_addr_changed: bool,
-    pub addrs_added: Vec<IpAddr>,
-    pub addrs_removed: Vec<IpAddr>,
+    pub addrs_added: Vec<IpRecord>,
+    pub addrs_removed: Vec<IpRecord>,
 }
 
 #[derive(Default, PartialEq, Eq)]
@@ -135,15 +145,15 @@ impl List {
             if prev.0[index] == self.0[index] {
                 continue;
             }
-            let prev_addr_set: HashSet<&IpAddr> = prev.0[index].ips.iter().collect();
-            let curr_addr_set: HashSet<&IpAddr> = self.0[index].ips.iter().collect();
-            let addrs_added: Vec<IpAddr> = curr_addr_set
+            let prev_addr_set: HashSet<&IpRecord> = prev.0[index].ips.iter().collect();
+            let curr_addr_set: HashSet<&IpRecord> = self.0[index].ips.iter().collect();
+            let addrs_added: Vec<IpRecord> = curr_addr_set
                 .sub(&prev_addr_set)
                 .iter()
                 .cloned()
                 .cloned()
                 .collect();
-            let addrs_removed: Vec<IpAddr> = prev_addr_set
+            let addrs_removed: Vec<IpRecord> = prev_addr_set
                 .sub(&curr_addr_set)
                 .iter()
                 .cloned()

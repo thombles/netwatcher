@@ -17,7 +17,7 @@ use windows::Win32::Networking::WinSock::{
     AF_INET, AF_INET6, AF_UNSPEC, SOCKADDR, SOCKADDR_IN, SOCKADDR_IN6,
 };
 
-use crate::{Error, Interface, List};
+use crate::{Error, Interface, IpRecord, List};
 
 pub(crate) fn list_interfaces() -> Result<List, Error> {
     let mut ifs = HashMap::new();
@@ -84,7 +84,8 @@ pub(crate) fn list_interfaces() -> Result<List, Error> {
                     }
                     _ => continue,
                 };
-                ips.push(ip);
+                let prefix_len = unicast.OnLinkPrefixLength;
+                ips.push(IpRecord { ip, prefix_len });
                 unicast_ptr = unicast.Next;
             }
             let ifindex = adapter.Ipv6IfIndex;
