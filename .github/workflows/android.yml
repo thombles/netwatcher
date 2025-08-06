@@ -26,6 +26,9 @@ jobs:
       working-directory: ./android
       run: sh ./gradlew assembleDebug
     
+    - name: Run clippy
+      run: cargo clippy --target aarch64-linux-android --all-targets -- -D warnings
+    
     - name: Run clippy on Android example code
       working-directory: ./android/app-native
       run: cargo clippy --target aarch64-linux-android --all-targets -- -D warnings
