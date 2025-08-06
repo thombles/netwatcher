@@ -25,3 +25,11 @@ jobs:
     - name: Build app containing Rust NDK component
       working-directory: ./android
       run: sh ./gradlew assembleDebug
+    
+    - name: Run clippy on Android example code
+      working-directory: ./android/app-native
+      run: cargo clippy --target aarch64-linux-android --all-targets -- -D warnings
+    
+    - name: Check formatting of Android example code
+      working-directory: ./android/app-native
+      run: cargo fmt --all -- --check
