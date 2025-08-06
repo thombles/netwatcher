@@ -1,0 +1,20 @@
+name: Android Build
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Build app containing Rust NDK component
+      working-directory: ./android
+      run: sh ./gradlew assembleDebug
