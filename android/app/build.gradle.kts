@@ -8,6 +8,7 @@ plugins {
 android {
     namespace = "net.octet_stream.netwatcher.netwatchertestapp"
     compileSdk = 36
+    ndkVersion = "28.2.13676358"
 
     defaultConfig {
         applicationId = "net.octet_stream.netwatcher.netwatchertestapp"
