@@ -113,7 +113,7 @@ fn format_interfaces(interfaces: &HashMap<u32, Interface>) -> String {
             result.push_str("  No IP addresses\n");
         } else {
             for ip in &interface.ips {
-                result.push_str(&format!("  {}\n", ip));
+                result.push_str(&format!("  {}/{}\n", ip.ip, ip.prefix_len));
             }
         }
         result.push('\n');
