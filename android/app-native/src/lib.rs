@@ -13,6 +13,9 @@ struct GuiCallback {
     callback_object: jni::objects::GlobalRef,
 }
 
+/// # Safety
+/// This function is called from Java/JNI and must be marked unsafe because it:
+/// - Accepts raw pointers from the JNI interface (context jobject)
 #[no_mangle]
 pub unsafe extern "C" fn Java_net_octet_1stream_netwatcher_netwatchertestapp_MainActivity_setAndroidContext(
     env: JNIEnv,
@@ -26,13 +29,16 @@ pub unsafe extern "C" fn Java_net_octet_1stream_netwatcher_netwatchertestapp_Mai
             log::debug!("Successfully set Android context via netwatcher");
         }
         Err(e) => {
-            log::error!("Failed to set Android context: {}", e);
+            log::error!("Failed to set Android context: {e}");
         }
     }
 }
 
+/// # Safety
+/// This function is called from Java/JNI and must be marked unsafe because it:
+/// - Accepts raw pointers from the JNI interface (callback jobject)
 #[no_mangle]
-pub extern "C" fn Java_net_octet_1stream_netwatcher_netwatchertestapp_MainActivity_startWatching(
+pub unsafe extern "C" fn Java_net_octet_1stream_netwatcher_netwatchertestapp_MainActivity_startWatching(
     env: JNIEnv,
     _class: JClass,
     callback: jobject,
@@ -82,7 +88,7 @@ fn start_interface_watching() {
             *handle_storage.lock().unwrap() = Some(handle);
         }
         Err(e) => {
-            log::error!("failed to start network interface watching: {:?}", e);
+            log::error!("failed to start network interface watching: {e:?}");
         }
     }
 }
@@ -106,7 +112,7 @@ fn format_interfaces(interfaces: &HashMap<u32, Interface>) -> String {
         return result;
     }
 
-    for (_index, interface) in interfaces {
+    for interface in interfaces.values() {
         result.push_str(&format!("{}:\n", interface.name));
 
         if interface.ips.is_empty() {
@@ -135,15 +141,15 @@ fn notify_java_gui(interface_data: String) {
                             "(Ljava/lang/String;)V",
                             &[(&java_string).into()],
                         ) {
-                            log::error!("failed to call java callback: {:?}", e);
+                            log::error!("failed to call java callback: {e:?}");
                         }
                     }
                     Err(e) => {
-                        log::error!("failed to create java string: {:?}", e);
+                        log::error!("failed to create java string: {e:?}");
                     }
                 },
                 Err(e) => {
-                    log::error!("failed to attach to java thread: {:?}", e);
+                    log::error!("failed to attach to java thread: {e:?}");
                 }
             }
         } else {

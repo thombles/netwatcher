@@ -81,7 +81,7 @@ fn format_mac(bytes: &[u8]) -> Result<String, Error> {
         if i != 0 {
             write!(mac, ":").map_err(|_| Error::FormatMacAddress)?;
         }
-        write!(mac, "{:02X}", b).map_err(|_| Error::FormatMacAddress)?;
+        write!(mac, "{b:02X}").map_err(|_| Error::FormatMacAddress)?;
     }
     Ok(mac)
 }
