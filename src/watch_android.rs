@@ -1,6 +1,6 @@
 use crate::{list, Error, List, Update};
 use jni::objects::{JClass, JObject};
-use jni::{JNIEnv, JavaVM, NativeMethod};
+use jni::{JNIEnv, NativeMethod};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -16,12 +16,7 @@ struct State {
     watchers: HashMap<WatcherId, Box<dyn FnMut(Update) + Send + 'static>>,
     current_interfaces: List,
     next_watcher_id: usize,
-    java_support: Option<JavaSupport>,
-}
-
-struct JavaSupport {
-    jvm: JavaVM,
-    support_object: jni::objects::GlobalRef,
+    java_support: Option<jni::objects::GlobalRef>,
 }
 
 type WatcherId = usize;
@@ -37,8 +32,8 @@ impl Drop for WatchHandle {
             state.watchers.remove(&self.id);
 
             if state.watchers.is_empty() {
-                if let Some(ref support) = state.java_support {
-                    let _ = stop_java_watching(support);
+                if let Some(ref support_object) = state.java_support {
+                    let _ = stop_java_watching(support_object);
                 }
                 state.java_support = None;
             }
@@ -79,37 +74,29 @@ pub(crate) fn watch_interfaces<F: FnMut(Update) + Send + 'static>(
 }
 
 fn start_java_watching(state: &mut State) -> Result<(), Error> {
-    let (vm_ptr, context_ptr) = crate::android::android_ctx().ok_or(Error::NoAndroidContext)?;
-    let jvm = unsafe { JavaVM::from_raw(vm_ptr as *mut jni::sys::JavaVM)? };
-
-    let support_object = {
+    let support_object = crate::android::with_android_ctx(|jvm, context_obj| {
         let mut env = jvm.attach_current_thread()?;
-        let support_class = inject_dex_class(&mut env)?;
-        let context_obj = unsafe { JObject::from_raw(context_ptr as jni::sys::jobject) };
+        let support_class = inject_dex_class(&mut env, context_obj)?;
         let support_object = env.new_object(
             &support_class,
             "(Landroid/content/Context;)V",
-            &[(&context_obj).into()],
+            &[context_obj.into()],
         )?;
         let global_ref = env.new_global_ref(support_object)?;
         env.call_method(&global_ref, "startInterfaceWatch", "()V", &[])?;
-        global_ref
-    };
+        Ok(global_ref)
+    })?;
 
-    let java_support = JavaSupport {
-        jvm,
-        support_object,
-    };
-    state.java_support = Some(java_support);
+    state.java_support = Some(support_object);
     Ok(())
 }
 
-fn inject_dex_class<'a>(env: &mut JNIEnv<'a>) -> Result<JClass<'a>, Error> {
-    let (_, context_ptr) = crate::android::android_ctx().ok_or(Error::NoAndroidContext)?;
-    let context_obj = unsafe { JObject::from_raw(context_ptr as jni::sys::jobject) };
-
+fn inject_dex_class<'a>(
+    env: &mut JNIEnv<'a>,
+    context_obj: &jni::objects::GlobalRef,
+) -> Result<JClass<'a>, Error> {
     // to enable backwards compat to API level 21, write to disk instead of loading in-memory
-    let cache_dir = env.call_method(&context_obj, "getCodeCacheDir", "()Ljava/io/File;", &[])?;
+    let cache_dir = env.call_method(context_obj, "getCodeCacheDir", "()Ljava/io/File;", &[])?;
     let cache_dir_path = env.call_method(
         &cache_dir.l()?,
         "getAbsolutePath",
@@ -128,7 +115,7 @@ fn inject_dex_class<'a>(env: &mut JNIEnv<'a>) -> Result<JClass<'a>, Error> {
 
     let dex_class_loader_class = env.find_class("dalvik/system/DexClassLoader")?;
     let parent_loader = env.call_method(
-        &context_obj,
+        context_obj,
         "getClassLoader",
         "()Ljava/lang/ClassLoader;",
         &[],
@@ -170,15 +157,12 @@ fn inject_dex_class<'a>(env: &mut JNIEnv<'a>) -> Result<JClass<'a>, Error> {
     Ok(support_class)
 }
 
-fn stop_java_watching(java_support: &JavaSupport) -> Result<(), Error> {
-    let mut env = java_support.jvm.attach_current_thread()?;
-    env.call_method(
-        &java_support.support_object,
-        "stopInterfaceWatch",
-        "()V",
-        &[],
-    )?;
-    Ok(())
+fn stop_java_watching(support_object: &jni::objects::GlobalRef) -> Result<(), Error> {
+    crate::android::with_android_ctx(|jvm, _| {
+        let mut env = jvm.attach_current_thread()?;
+        env.call_method(support_object, "stopInterfaceWatch", "()V", &[])?;
+        Ok(())
+    })
 }
 
 #[no_mangle]

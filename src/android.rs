@@ -42,20 +42,28 @@ pub unsafe fn set_android_context(
     Ok(())
 }
 
-pub(crate) fn android_ctx() -> Option<(*mut std::ffi::c_void, *mut std::ffi::c_void)> {
+pub(crate) fn with_android_ctx<T>(
+    f: impl FnOnce(&JavaVM, &jni::objects::GlobalRef) -> Result<T, Error>,
+) -> Result<T, Error> {
     if let Some(context_storage) = ANDROID_CONTEXT.get() {
         let ctx = context_storage.lock().unwrap();
         if let Some(ref android_ctx) = *ctx {
-            let vm_ptr = android_ctx.vm.get_java_vm_pointer() as *mut std::ffi::c_void;
-            let context_ptr = android_ctx.context.as_obj().as_raw() as *mut std::ffi::c_void;
-            return Some((vm_ptr, context_ptr));
+            return f(&android_ctx.vm, &android_ctx.context);
         }
     }
 
     // Fallback to ndk_context if no explicit context was set
     let ctx = ndk_context::android_context();
     if ctx.vm().is_null() || ctx.context().is_null() {
-        return None;
+        return Err(Error::NoAndroidContext);
     }
-    Some((ctx.vm(), ctx.context()))
+
+    unsafe {
+        let vm = JavaVM::from_raw(ctx.vm() as *mut jni::sys::JavaVM)?;
+        let env = vm.attach_current_thread()?;
+        let context_obj = JObject::from_raw(ctx.context() as jni::sys::jobject);
+        let global_context = env.new_global_ref(&context_obj)?;
+
+        f(&vm, &global_context)
+    }
 }
