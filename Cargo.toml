@@ -7,7 +7,7 @@ description = "List network interfaces and watch for changes efficiently"
 repository = "https://github.com/thombles/netwatcher"
 readme = "README.md"
 authors = ["Thomas Karpiniec <tom.karpiniec@outlook.com>"]
-keywords = ["interfaces", "ip", "adapter"]
+keywords = ["interfaces", "ip", "adapter", "address", "netmask"]
 categories = ["network-programming"]
 exclude = [
     "android/*",
