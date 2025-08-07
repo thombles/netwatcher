@@ -1,6 +1,9 @@
 use netwatcher::{list_interfaces, IpRecord};
 use std::net::{IpAddr, Ipv4Addr};
 
+#[cfg(target_os = "windows")]
+mod windows;
+
 #[test]
 fn test_list_interfaces_has_loopback() {
     let interfaces = list_interfaces().expect("failed to list network interfaces");
