@@ -1,7 +1,7 @@
 use netwatcher::{list_interfaces, IpRecord};
 use std::net::{IpAddr, Ipv4Addr};
 
-#[cfg(any(target_os = "windows", target_os = "linux"))]
+#[cfg(any(target_os = "windows", target_os = "linux", target_vendor = "apple"))]
 mod helpers;
 
 #[test]
@@ -22,7 +22,7 @@ fn test_list_interfaces_has_loopback() {
 
 #[test]
 #[ignore] // needs to run in administrator/root context
-#[cfg(any(target_os = "windows", target_os = "linux"))]
+#[cfg(any(target_os = "windows", target_os = "linux", target_vendor = "apple"))]
 fn test_watch_interfaces_loopback_changes() {
     use helpers::sys::*;
     use helpers::*;

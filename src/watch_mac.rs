@@ -1,91 +1,89 @@
-use std::sync::Mutex;
+use std::os::fd::{AsRawFd, OwnedFd};
+use std::sync::mpsc;
 
-use block2::{Block, RcBlock};
-use objc2::Encoding;
+use nix::libc::{poll, pollfd, POLLIN};
+use nix::sys::socket::{recv, socket, AddressFamily, MsgFlags, SockFlag, SockType};
+use nix::unistd::pipe;
 
 use crate::{Error, List, Update};
 
-// The "objc2" project aims to provide bindings for all frameworks but Network.framework
-// isn't ready yet so let's kick it old-school
-
-#[repr(C)]
-struct NwPathMonitor([u8; 0]);
-type NwPathMonitorT = *mut NwPathMonitor;
-#[repr(C)]
-struct NwPath([u8; 0]);
-#[repr(C)]
-struct DispatchQueue([u8; 0]);
-type DispatchQueueT = *mut DispatchQueue;
-const QOS_CLASS_BACKGROUND: usize = 0x09;
-
-unsafe impl objc2::Encode for NwPath {
-    const ENCODING: Encoding = usize::ENCODING;
-}
-
-unsafe impl Send for WatchHandle {}
-
-#[link(name = "Network", kind = "framework")]
-extern "C" {
-    fn nw_path_monitor_create() -> NwPathMonitorT;
-    fn nw_path_monitor_set_update_handler(
-        monitor: NwPathMonitorT,
-        update_handler: &Block<dyn Fn(NwPath)>,
-    );
-    fn nw_path_monitor_set_queue(monitor: NwPathMonitorT, queue: DispatchQueueT);
-    fn nw_path_monitor_start(monitor: NwPathMonitorT);
-    fn nw_path_monitor_cancel(monitor: NwPathMonitorT);
-
-    fn dispatch_get_global_queue(identifier: usize, flag: usize) -> DispatchQueueT;
-}
-
 pub(crate) struct WatchHandle {
-    path_monitor: NwPathMonitorT,
+    pipefd: Option<OwnedFd>,
+    complete: Option<mpsc::Receiver<()>>,
 }
 
 impl Drop for WatchHandle {
     fn drop(&mut self) {
-        unsafe {
-            nw_path_monitor_cancel(self.path_monitor);
-        }
+        drop(self.pipefd.take());
+        let _ = self.complete.take().unwrap().recv();
     }
-}
-
-struct CallbackState {
-    prev_list: List,
-    callback: Box<dyn FnMut(Update) + Send + 'static>,
 }
 
 pub(crate) fn watch_interfaces<F: FnMut(Update) + Send + 'static>(
     callback: F,
 ) -> Result<WatchHandle, Error> {
-    let state = CallbackState {
-        prev_list: List::default(),
-        callback: Box::new(callback),
-    };
-    // Blocks are Fn, not FnMut
-    let state = Mutex::new(state);
-    let block = RcBlock::new(move |_: NwPath| {
-        let mut state = state.lock().unwrap();
-        let Ok(new_list) = crate::list::list_interfaces() else {
-            return;
-        };
-        if new_list == state.prev_list {
+    let (pipefd, complete) = start_watcher_thread(callback)?;
+    Ok(WatchHandle {
+        pipefd: Some(pipefd),
+        complete: Some(complete),
+    })
+}
+
+fn start_watcher_thread<F: FnMut(Update) + Send + 'static>(
+    mut callback: F,
+) -> Result<(OwnedFd, mpsc::Receiver<()>), Error> {
+    let sockfd = socket(AddressFamily::Route, SockType::Raw, SockFlag::empty(), None)
+        .map_err(|e| Error::CreateSocket(e.to_string()))?;
+
+    let (pipe_rd, pipe_wr) = pipe().map_err(|e| Error::CreatePipe(e.to_string()))?;
+
+    let mut prev_list = List::default();
+    let mut handle_update = move |new_list: List| {
+        if new_list == prev_list {
             return;
         }
         let update = Update {
             interfaces: new_list.0.clone(),
-            diff: new_list.diff_from(&state.prev_list),
+            diff: new_list.diff_from(&prev_list),
         };
-        (state.callback)(update);
-        state.prev_list = new_list;
+        (callback)(update);
+        prev_list = new_list;
+    };
+
+    // Initial snapshot
+    handle_update(crate::list::list_interfaces()?);
+
+    let (complete_tx, complete_rx) = mpsc::channel();
+
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 8192];
+        loop {
+            let mut fds = [
+                pollfd {
+                    fd: sockfd.as_raw_fd(),
+                    events: POLLIN,
+                    revents: 0,
+                },
+                pollfd {
+                    fd: pipe_rd.as_raw_fd(),
+                    events: POLLIN,
+                    revents: 0,
+                },
+            ];
+            unsafe { poll(fds.as_mut_ptr(), fds.len() as _, -1) };
+            if fds[0].revents != 0 && recv(sockfd.as_raw_fd(), &mut buf, MsgFlags::empty()).is_ok()
+            {
+                let Ok(new_list) = crate::list::list_interfaces() else {
+                    continue;
+                };
+                handle_update(new_list);
+            }
+            if fds[1].revents != 0 {
+                break;
+            }
+        }
+        drop(complete_tx);
     });
-    let path_monitor: NwPathMonitorT;
-    unsafe {
-        let queue = dispatch_get_global_queue(QOS_CLASS_BACKGROUND, 0);
-        path_monitor = nw_path_monitor_create();
-        nw_path_monitor_set_update_handler(path_monitor, &block);
-        nw_path_monitor_set_queue(path_monitor, queue);
-        nw_path_monitor_start(path_monitor);
-    }
-    Ok(WatchHandle { path_monitor })
+
+    Ok((pipe_wr, complete_rx))
 }

@@ -10,6 +10,10 @@ pub mod sys;
 #[path = "sys_linux.rs"]
 pub mod sys;
 
+#[cfg(target_vendor = "apple")]
+#[path = "sys_mac.rs"]
+pub mod sys;
+
 pub fn setup_callback_handler() -> (
     impl Fn(usize) + 'static,
     Arc<Mutex<Vec<Update>>>,
