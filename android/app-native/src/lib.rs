@@ -13,6 +13,16 @@ struct GuiCallback {
     callback_object: jni::objects::GlobalRef,
 }
 
+// Helper for CI testing that logs IPs in a particular format
+fn log_ips(prefix: &str, interfaces: &HashMap<u32, Interface>) {
+    let ips: Vec<String> = interfaces
+        .values()
+        .flat_map(|iface| iface.ips.iter().map(|record| record.ip.to_string()))
+        .collect();
+    let joined = ips.join(",");
+    log::info!("{prefix}:{joined}");
+}
+
 /// # Safety
 /// This function is called from Java/JNI and must be marked unsafe because it:
 /// - Accepts raw pointers from the JNI interface (context jobject)
@@ -27,6 +37,11 @@ pub unsafe extern "C" fn Java_net_octet_1stream_netwatcher_netwatchertestapp_Mai
     match netwatcher::set_android_context(env_ptr, context) {
         Ok(_) => {
             log::debug!("Successfully set Android context via netwatcher");
+            // For CI testing, list interfaces at startup
+            match netwatcher::list_interfaces() {
+                Ok(ifs) => log_ips("LIST_IPS", &ifs),
+                Err(e) => log::error!("Failed to list interfaces after setting context: {e}"),
+            }
         }
         Err(e) => {
             log::error!("Failed to set Android context: {e}");
@@ -79,6 +94,8 @@ fn start_interface_watching() {
             "interface update received: {} interfaces",
             update.interfaces.len()
         );
+        // For CI testing, emit WATCH_IPS
+        log_ips("WATCH_IPS", &update.interfaces);
         notify_java_gui(format_interfaces(&update.interfaces));
     });
 
