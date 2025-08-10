@@ -13,6 +13,22 @@ struct GuiCallback {
     callback_object: jni::objects::GlobalRef,
 }
 
+fn init_android_logging() {
+    android_logger::init_once(
+        android_logger::Config::default().with_max_level(log::LevelFilter::Debug),
+    );
+}
+
+// Helper for CI testing that logs IPs in a particular format
+fn log_ips(prefix: &str, interfaces: &HashMap<u32, Interface>) {
+    let ips: Vec<String> = interfaces
+        .values()
+        .flat_map(|iface| iface.ips.iter().map(|record| record.ip.to_string()))
+        .collect();
+    let joined = ips.join(",");
+    log::info!("{prefix}:{joined}");
+}
+
 /// # Safety
 /// This function is called from Java/JNI and must be marked unsafe because it:
 /// - Accepts raw pointers from the JNI interface (context jobject)
@@ -22,11 +38,17 @@ pub unsafe extern "C" fn Java_net_octet_1stream_netwatcher_netwatchertestapp_Mai
     _class: JClass,
     context: jobject,
 ) {
+    init_android_logging();
     log::info!("set_android_context in Rust");
     let env_ptr = env.get_raw();
     match netwatcher::set_android_context(env_ptr, context) {
         Ok(_) => {
             log::debug!("Successfully set Android context via netwatcher");
+            // For CI testing, list interfaces at startup
+            match netwatcher::list_interfaces() {
+                Ok(ifs) => log_ips("LIST_IPS", &ifs),
+                Err(e) => log::error!("Failed to list interfaces after setting context: {e}"),
+            }
         }
         Err(e) => {
             log::error!("Failed to set Android context: {e}");
@@ -43,9 +65,7 @@ pub unsafe extern "C" fn Java_net_octet_1stream_netwatcher_netwatchertestapp_Mai
     _class: JClass,
     callback: jobject,
 ) {
-    android_logger::init_once(
-        android_logger::Config::default().with_max_level(log::LevelFilter::Debug),
-    );
+    init_android_logging();
 
     log::info!("starting network interface watching from Rust");
     if let Ok(jvm) = env.get_java_vm() {
@@ -79,6 +99,8 @@ fn start_interface_watching() {
             "interface update received: {} interfaces",
             update.interfaces.len()
         );
+        // For CI testing, emit WATCH_IPS
+        log_ips("WATCH_IPS", &update.interfaces);
         notify_java_gui(format_interfaces(&update.interfaces));
     });
 

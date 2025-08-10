@@ -22,8 +22,11 @@ jobs:
     - name: Build
       run: cargo build
 
-    - name: Run tests
-      run: cargo test -- --include-ignored
+    - name: Run lib tests
+      run: cargo test --lib -- --nocapture
+      
+    - name: Run integration tests
+      run: cargo test --test api_test -- --include-ignored --nocapture
 
     - name: Run clippy
       run: cargo clippy --all-targets -- -D warnings

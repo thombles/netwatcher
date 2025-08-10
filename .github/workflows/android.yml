@@ -22,10 +22,6 @@ jobs:
         rustup target add i686-linux-android
         rustup target add x86_64-linux-android
     
-    - name: Build app containing Rust NDK component
-      working-directory: ./android
-      run: sh ./gradlew assembleDebug
-    
     - name: Run clippy
       run: cargo clippy --target aarch64-linux-android --all-targets -- -D warnings
     
@@ -36,3 +32,18 @@ jobs:
     - name: Check formatting of Android example code
       working-directory: ./android/app-native
       run: cargo fmt --all -- --check
+
+    - name: Enable KVM
+      run: |
+        echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+        sudo udevadm control --reload-rules
+        sudo udevadm trigger --name-match=kvm
+
+    - name: Run integration tests via test app
+      uses: reactivecircus/android-emulator-runner@v2
+      with:
+        api-level: 35
+        target: default
+        arch: x86_64
+        profile: pixel_6
+        script: cargo test --test android_api_test -- --include-ignored --nocapture
