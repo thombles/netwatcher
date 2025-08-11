@@ -37,7 +37,7 @@
 //!         println!("Added IPs: {:?}", if_diff.addrs_added);
 //!         println!("Removed IPs: {:?}", if_diff.addrs_removed);
 //!     }
-//! });
+//! }).unwrap();
 //! // keep `handle` alive as long as you want callbacks
 //! // ...
 //! drop(handle);
@@ -81,9 +81,13 @@ pub struct IpRecord {
 /// Information about one network interface at a point in time.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Interface {
+    /// Internal index identifying this interface.
     pub index: u32,
+    /// Interface name.
     pub name: String,
+    /// Hardware address. Android may have a placeholder due to privacy restrictions.
     pub hw_addr: String,
+    /// List of associated IPs and prefix length (netmask).
     pub ips: Vec<IpRecord>,
 }
 

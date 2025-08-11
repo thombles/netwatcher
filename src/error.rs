@@ -1,4 +1,4 @@
-/// Errors in netwatcher or in one of the underlying platform integratinos.
+/// Errors in netwatcher or in one of the underlying platform integrations.
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum Error {

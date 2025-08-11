@@ -7,7 +7,8 @@ fn main() {
         println!("Interface update!");
         println!("State: {:#?}", update.interfaces);
         println!("Diff: {:#?}", update.diff);
-    });
+    })
+    .unwrap();
 
     std::thread::sleep(Duration::from_secs(30));
 

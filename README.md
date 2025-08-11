@@ -10,17 +10,17 @@
 | Platform | Min Version | List | Watch | Notes                                                                                 |
 |----------|-------------|------|-------|---------------------------------------------------------------------------------------|
 | Windows  | -           | ✅    | ✅     |                                                                                       |
-| Mac      | 10.14       | ✅    | ✅     |                                                                                       |
-| Linux    | -           | ✅    | ✅     | Creates a background thread                                                           |
-| iOS      | 12.0        | ✅    | ✅     |                                                                                       |
-| Android  | 5.0         | ✅    | ✅     | Watch support requires extra setup. See Android Setup instruction below.              |
+| Mac      | -           | ✅    | ✅     | Watch creates background thread                                                       |
+| Linux    | -           | ✅    | ✅     | Watch creates background thread                                                       |
+| iOS      | -           | ✅    | ✅     | Watch creates background thread                                                       |
+| Android  | 5.0         | ✅    | ✅     | Watch requires extra setup. See Android Setup instructions below.             |
 
 ## Usage
 
 ### Listing interfaces
 
 ```rust
-/// Returns a HashMap from ifindex (a `u32`) to an `Interface` struct
+// Returns a HashMap from ifindex (a `u32`) to an `Interface` struct
 let interfaces = netwatcher::list_interfaces().unwrap();
 for i in interfaces.values() {
     println!("interface {} has {} IPs", i.name, i.ips.len());
@@ -45,7 +45,7 @@ let handle = netwatcher::watch_interfaces(|update| {
         println!("Added IPs: {:?}", if_diff.addrs_added);
         println!("Removed IPs: {:?}", if_diff.addrs_removed);
     }
-});
+}).unwrap();
 // keep `handle` alive as long as you want callbacks
 // ...
 drop(handle);
@@ -60,7 +60,7 @@ Ensure the app module which is going to end up running `netwatcher` has these pe
     <uses-permission android:name="android.permission.INTERNET" />
 ```
 
-You will also need to make sure that `netwatcher` gets access to the Android app's `Context`. There is built-in support for the [ndk-context](https://crates.io/crates/ndk-context) crate. What this means is that if you're using certain frameworks for building all-Rust Android apps then it will be able to pick up the context automatically. In other situations, the Rust code in your app will have to call `netwatcher::set_android_context`.
+You will also need to make sure that `netwatcher` gets access to the Android app's `Context`. There is built-in support for the [ndk-context](https://crates.io/crates/ndk-context) crate. What this means is that if you're using certain frameworks for building all-Rust Android apps then it will be able to pick up the context automatically. In other situations, the Rust code in your app will have to call `netwatcher::set_android_context` ([example code](https://github.com/thombles/netwatcher/blob/b58d2283f5a3f7a5c324946ba8e92407c0d8a2dd/android/app-native/src/lib.rs#L32-L44)).
 
 There is a test app included in the repo that provides a full example. [MainActivity.kt](https://github.com/thombles/netwatcher/blob/main/android/app/src/main/java/net/octet_stream/netwatcher/netwatchertestapp/MainActivity.kt) is an activity with some methods defined in Rust. [app-native/src/lib.rs](https://github.com/thombles/netwatcher/blob/main/android/app-native/src/lib.rs) provides the native implementations of those methods. This includes an example of calling `set_android_context`, and using the `netwatcher` library to watch for interface changes, passing the results back to the Java GUI.
 
