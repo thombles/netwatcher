@@ -1,14 +1,12 @@
 use std::collections::HashMap;
 use std::fmt::Write;
 use std::net::IpAddr;
-
+use windows::core::HSTRING;
 use windows::Win32::Foundation::{
     ERROR_ADDRESS_NOT_ASSOCIATED, ERROR_BUFFER_OVERFLOW, ERROR_INVALID_PARAMETER,
     ERROR_NOT_ENOUGH_MEMORY, ERROR_NO_DATA, ERROR_SUCCESS, WIN32_ERROR,
 };
-use windows::Win32::NetworkManagement::IpHelper::{
-    GetAdaptersAddresses, IP_ADAPTER_UNICAST_ADDRESS_LH,
-};
+use windows::Win32::NetworkManagement::IpHelper::{GetAdapterIndex, GetAdaptersAddresses, IP_ADAPTER_UNICAST_ADDRESS_LH};
 use windows::Win32::NetworkManagement::IpHelper::{
     GAA_FLAG_SKIP_ANYCAST, GAA_FLAG_SKIP_MULTICAST, IP_ADAPTER_ADDRESSES_LH,
 };
@@ -88,7 +86,12 @@ pub(crate) fn list_interfaces() -> Result<List, Error> {
                 ips.push(IpRecord { ip, prefix_len });
                 unicast_ptr = unicast.Next;
             }
-            let ifindex = adapter.Ipv6IfIndex;
+            let adapter_name = format!("\\DEVICE\\TCPIP_{}",adapter.AdapterName.to_string().unwrap_or_default());
+            let mut ifindex = 0;
+            let res = GetAdapterIndex(&HSTRING::from(&adapter_name), &mut ifindex);
+            if WIN32_ERROR(res) != ERROR_SUCCESS {
+                return Err(Error::UnexpectedWindowsResult(res));
+            }
             let name = adapter
                 .FriendlyName
                 .to_string()
