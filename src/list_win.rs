@@ -5,7 +5,9 @@ use windows::Win32::Foundation::{
     ERROR_ADDRESS_NOT_ASSOCIATED, ERROR_BUFFER_OVERFLOW, ERROR_INVALID_PARAMETER,
     ERROR_NOT_ENOUGH_MEMORY, ERROR_NO_DATA, ERROR_SUCCESS, WIN32_ERROR,
 };
-use windows::Win32::NetworkManagement::IpHelper::{GetAdaptersAddresses, IP_ADAPTER_UNICAST_ADDRESS_LH};
+use windows::Win32::NetworkManagement::IpHelper::{
+    GetAdaptersAddresses, IP_ADAPTER_UNICAST_ADDRESS_LH,
+};
 use windows::Win32::NetworkManagement::IpHelper::{
     GAA_FLAG_SKIP_ANYCAST, GAA_FLAG_SKIP_MULTICAST, IP_ADAPTER_ADDRESSES_LH,
 };
@@ -85,7 +87,7 @@ pub(crate) fn list_interfaces() -> Result<List, Error> {
                 ips.push(IpRecord { ip, prefix_len });
                 unicast_ptr = unicast.Next;
             }
-            
+
             let ipv4_if_index = adapter.Anonymous1.Anonymous.IfIndex;
             let ipv6_if_index = adapter.Ipv6IfIndex;
             let ifindex = if ipv4_if_index != 0 {
