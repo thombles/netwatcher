@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::fmt::Write;
 use std::net::IpAddr;
-
 use windows::Win32::Foundation::{
     ERROR_ADDRESS_NOT_ASSOCIATED, ERROR_BUFFER_OVERFLOW, ERROR_INVALID_PARAMETER,
     ERROR_NOT_ENOUGH_MEMORY, ERROR_NO_DATA, ERROR_SUCCESS, WIN32_ERROR,
@@ -88,7 +87,18 @@ pub(crate) fn list_interfaces() -> Result<List, Error> {
                 ips.push(IpRecord { ip, prefix_len });
                 unicast_ptr = unicast.Next;
             }
-            let ifindex = adapter.Ipv6IfIndex;
+
+            let ipv4_if_index = adapter.Anonymous1.Anonymous.IfIndex;
+            let ipv6_if_index = adapter.Ipv6IfIndex;
+            let ifindex = if ipv4_if_index != 0 {
+                ipv4_if_index
+            } else if ipv6_if_index != 0 {
+                ipv6_if_index
+            } else {
+                adapter_ptr = adapter.Next;
+                continue;
+            };
+
             let name = adapter
                 .FriendlyName
                 .to_string()
