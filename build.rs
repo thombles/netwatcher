@@ -1,17 +1,22 @@
-use android_build::{DebugInfo, Dexer, JavaBuild};
 use std::env;
-use std::path::PathBuf;
+
+#[cfg(target_os = "android")]
+use android_build::{DebugInfo, Dexer, JavaBuild};
 
 fn main() {
     println!("cargo:rerun-if-changed=java/");
-    if !env::var("TARGET").unwrap().contains("android") {
-        return;
+    if env::var("TARGET").unwrap().contains("android") {
+        #[cfg(target_os = "android")]
+        android_build();
     }
+}
 
+#[cfg(target_os = "android")]
+fn android_build() {
     let android_jar = android_build::android_jar(None).expect("Unable to locate android.jar path");
     let is_release_build = env::var("PROFILE") == Ok("release".to_owned());
     let java_path = "java/net/octet_stream/netwatcher/NetwatcherSupportAndroid.java";
-    let out_dir: PathBuf = env::var_os("OUT_DIR").unwrap().into();
+    let out_dir: std::path::PathBuf = env::var_os("OUT_DIR").unwrap().into();
     let classes_out_dir = out_dir.join("java/net/octet_stream/netwatcher");
     let _ = std::fs::remove_dir_all(&classes_out_dir);
     std::fs::create_dir_all(&classes_out_dir).unwrap();
@@ -21,7 +26,11 @@ fn main() {
         .classes_out_dir(&classes_out_dir)
         .java_source_version(8)
         .java_target_version(8)
-        .debug_info(debug_info(is_release_build))
+        .debug_info(DebugInfo {
+            line_numbers: !is_release_build,
+            source_files: !is_release_build,
+            variables: !is_release_build,
+        })
         .compile()
         .expect("java build failed");
 
@@ -48,13 +57,5 @@ fn main() {
             "DEX file was not created at expected location: {}",
             dex_path.display()
         );
-    }
-}
-
-fn debug_info(is_release_build: bool) -> DebugInfo {
-    DebugInfo {
-        line_numbers: !is_release_build,
-        source_files: !is_release_build,
-        variables: !is_release_build,
     }
 }

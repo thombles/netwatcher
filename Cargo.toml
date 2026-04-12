@@ -30,5 +30,5 @@ features = [
     "Win32_Networking_WinSock",
 ]
 
-[build-dependencies]
+[target.'cfg(target_os = "android")'.build-dependencies]
 android-build = "0.1.3"
