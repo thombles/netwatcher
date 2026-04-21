@@ -10,8 +10,7 @@ use windows::Win32::NetworkManagement::IpHelper::CancelMibChangeNotify2;
 use windows::Win32::NetworkManagement::IpHelper::MIB_NOTIFICATION_TYPE;
 use windows::Win32::NetworkManagement::IpHelper::MIB_UNICASTIPADDRESS_ROW;
 use windows::Win32::{
-    Foundation::{BOOLEAN, HANDLE},
-    NetworkManagement::IpHelper::NotifyUnicastIpAddressChange,
+    Foundation::HANDLE, NetworkManagement::IpHelper::NotifyUnicastIpAddressChange,
     Networking::WinSock::AF_UNSPEC,
 };
 
@@ -50,13 +49,7 @@ pub(crate) fn watch_interfaces<F: FnMut(Update) + Send + 'static>(
 
     let mut hnd = HANDLE::default();
     let res = unsafe {
-        NotifyUnicastIpAddressChange(
-            AF_UNSPEC,
-            Some(notif),
-            Some(state_ctx),
-            BOOLEAN(0),
-            &mut hnd,
-        )
+        NotifyUnicastIpAddressChange(AF_UNSPEC, Some(notif), Some(state_ctx), false, &mut hnd)
     };
     match res {
         NO_ERROR => {

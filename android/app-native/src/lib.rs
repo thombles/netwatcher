@@ -1,6 +1,8 @@
-use jni::objects::{JClass, JObject};
-use jni::sys::jobject;
-use jni::JNIEnv;
+use jni::{
+    jni_sig, jni_str,
+    objects::{Global, JClass, JObject},
+    EnvUnowned, Outcome,
+};
 use netwatcher::{Interface, WatchHandle};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -10,7 +12,7 @@ static WATCHER_HANDLE: OnceLock<Arc<Mutex<Option<WatchHandle>>>> = OnceLock::new
 
 struct GuiCallback {
     jvm: jni::JavaVM,
-    callback_object: jni::objects::GlobalRef,
+    callback_object: Global<JObject<'static>>,
 }
 
 fn init_android_logging() {
@@ -33,15 +35,14 @@ fn log_ips(prefix: &str, interfaces: &HashMap<u32, Interface>) {
 /// This function is called from Java/JNI and must be marked unsafe because it:
 /// - Accepts raw pointers from the JNI interface (context jobject)
 #[no_mangle]
-pub unsafe extern "C" fn Java_net_octet_1stream_netwatcher_netwatchertestapp_MainActivity_setAndroidContext(
-    env: JNIEnv,
-    _class: JClass,
-    context: jobject,
+pub extern "system" fn Java_net_octet_1stream_netwatcher_netwatchertestapp_MainActivity_setAndroidContext(
+    env: EnvUnowned<'_>,
+    _class: JClass<'_>,
+    context: JObject<'_>,
 ) {
     init_android_logging();
     log::info!("set_android_context in Rust");
-    let env_ptr = env.get_raw();
-    match netwatcher::set_android_context(env_ptr, context) {
+    match unsafe { netwatcher::set_android_context(env.as_raw(), context.as_raw()) } {
         Ok(_) => {
             log::debug!("Successfully set Android context via netwatcher");
             // For CI testing, list interfaces at startup
@@ -60,34 +61,38 @@ pub unsafe extern "C" fn Java_net_octet_1stream_netwatcher_netwatchertestapp_Mai
 /// This function is called from Java/JNI and must be marked unsafe because it:
 /// - Accepts raw pointers from the JNI interface (callback jobject)
 #[no_mangle]
-pub unsafe extern "C" fn Java_net_octet_1stream_netwatcher_netwatchertestapp_MainActivity_startWatching(
-    env: JNIEnv,
-    _class: JClass,
-    callback: jobject,
+pub extern "system" fn Java_net_octet_1stream_netwatcher_netwatchertestapp_MainActivity_startWatching(
+    mut env: EnvUnowned<'_>,
+    _class: JClass<'_>,
+    callback: JObject<'_>,
 ) {
     init_android_logging();
 
     log::info!("starting network interface watching from Rust");
-    if let Ok(jvm) = env.get_java_vm() {
-        let callback_obj = unsafe { JObject::from_raw(callback) };
-        if let Ok(global_ref) = env.new_global_ref(&callback_obj) {
+    match env
+        .with_env(|env| -> jni::errors::Result<()> {
             let gui_callback = GuiCallback {
-                jvm,
-                callback_object: global_ref,
+                jvm: env.get_java_vm()?,
+                callback_object: env.new_global_ref(&callback)?,
             };
 
             let callback_storage = GUI_CALLBACK.get_or_init(|| Arc::new(Mutex::new(None)));
             *callback_storage.lock().unwrap() = Some(gui_callback);
 
-            start_interface_watching();
-        }
+            Ok(())
+        })
+        .into_outcome()
+    {
+        Outcome::Ok(()) => start_interface_watching(),
+        Outcome::Err(e) => log::error!("failed to initialise java callback: {e:?}"),
+        Outcome::Panic(_) => log::error!("panic while initialising java callback"),
     }
 }
 
 #[no_mangle]
-pub extern "C" fn Java_net_octet_1stream_netwatcher_netwatchertestapp_MainActivity_stopWatching(
-    _env: JNIEnv,
-    _class: JClass,
+pub extern "system" fn Java_net_octet_1stream_netwatcher_netwatchertestapp_MainActivity_stopWatching(
+    _env: EnvUnowned<'_>,
+    _class: JClass<'_>,
 ) {
     log::info!("stopping network interface watching from Rust");
     stop_interface_watching();
@@ -154,25 +159,20 @@ fn notify_java_gui(interface_data: String) {
     if let Some(callback_storage) = GUI_CALLBACK.get() {
         let guard = callback_storage.lock().unwrap();
         if let Some(ref callback) = *guard {
-            match callback.jvm.attach_current_thread() {
-                Ok(mut env) => match env.new_string(&interface_data) {
-                    Ok(java_string) => {
-                        if let Err(e) = env.call_method(
-                            &callback.callback_object,
-                            "onInterfacesChanged",
-                            "(Ljava/lang/String;)V",
-                            &[(&java_string).into()],
-                        ) {
-                            log::error!("failed to call java callback: {e:?}");
-                        }
-                    }
-                    Err(e) => {
-                        log::error!("failed to create java string: {e:?}");
-                    }
-                },
-                Err(e) => {
-                    log::error!("failed to attach to java thread: {e:?}");
-                }
+            if let Err(e) = callback
+                .jvm
+                .attach_current_thread(|env| -> jni::errors::Result<()> {
+                    let java_string = env.new_string(&interface_data)?;
+                    env.call_method(
+                        callback.callback_object.as_ref(),
+                        jni_str!("onInterfacesChanged"),
+                        jni_sig!("(Ljava/lang/String;)V"),
+                        &[(&java_string).into()],
+                    )?;
+                    Ok(())
+                })
+            {
+                log::error!("failed to notify java callback: {e:?}");
             }
         } else {
             log::warn!("GUI callback unset");

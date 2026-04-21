@@ -1,10 +1,13 @@
 use crate::Error;
-use jni::{objects::JObject, JNIEnv, JavaVM};
+use jni::{
+    objects::{Global, JObject},
+    EnvUnowned, JavaVM, Outcome,
+};
 use std::sync::{Mutex, OnceLock};
 
 struct AndroidContext {
     vm: JavaVM,
-    context: jni::objects::GlobalRef,
+    context: Global<JObject<'static>>,
 }
 
 unsafe impl Send for AndroidContext {}
@@ -25,25 +28,30 @@ pub unsafe fn set_android_context(
     env: *mut jni::sys::JNIEnv,
     context: jni::sys::jobject,
 ) -> Result<(), Error> {
-    let env = JNIEnv::from_raw(env)?;
-    let context_obj = JObject::from_raw(context);
+    let mut env = unsafe { EnvUnowned::from_raw(env) };
+    match env
+        .with_env(|env| {
+            let context_obj = unsafe { JObject::from_raw(env, context) };
+            let android_ctx = AndroidContext {
+                vm: env.get_java_vm()?,
+                context: env.new_global_ref(&context_obj)?,
+            };
 
-    let jvm = env.get_java_vm()?;
-    let global_context = env.new_global_ref(&context_obj)?;
+            let context_storage = ANDROID_CONTEXT.get_or_init(|| Mutex::new(None));
+            *context_storage.lock().unwrap() = Some(android_ctx);
 
-    let android_ctx = AndroidContext {
-        vm: jvm,
-        context: global_context,
-    };
-
-    let context_storage = ANDROID_CONTEXT.get_or_init(|| Mutex::new(None));
-    *context_storage.lock().unwrap() = Some(android_ctx);
-
-    Ok(())
+            Ok(())
+        })
+        .into_outcome()
+    {
+        Outcome::Ok(()) => Ok(()),
+        Outcome::Err(err) => Err(err),
+        Outcome::Panic(_) => Err(Error::Jni("panic while setting Android context".into())),
+    }
 }
 
 pub(crate) fn with_android_ctx<T>(
-    f: impl FnOnce(&JavaVM, &jni::objects::GlobalRef) -> Result<T, Error>,
+    f: impl FnOnce(&JavaVM, &Global<JObject<'static>>) -> Result<T, Error>,
 ) -> Result<T, Error> {
     if let Some(context_storage) = ANDROID_CONTEXT.get() {
         let ctx = context_storage.lock().unwrap();
@@ -59,11 +67,12 @@ pub(crate) fn with_android_ctx<T>(
     }
 
     unsafe {
-        let vm = JavaVM::from_raw(ctx.vm() as *mut jni::sys::JavaVM)?;
-        let env = vm.attach_current_thread()?;
-        let context_obj = JObject::from_raw(ctx.context() as jni::sys::jobject);
-        let global_context = env.new_global_ref(&context_obj)?;
+        let vm = JavaVM::from_raw(ctx.vm() as *mut jni::sys::JavaVM);
+        vm.attach_current_thread(|env| {
+            let context_obj = JObject::from_raw(env, ctx.context() as jni::sys::jobject);
+            let global_context = env.new_global_ref(&context_obj)?;
 
-        f(&vm, &global_context)
+            f(&vm, &global_context)
+        })
     }
 }
