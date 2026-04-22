@@ -28,8 +28,20 @@ jobs:
     - name: Run integration tests
       run: cargo test --test api_test -- --include-ignored --nocapture
 
+    - name: Run async integration tests with tokio
+      run: cargo test --features tokio --test async_api_test -- --include-ignored --nocapture
+
+    - name: Run async integration tests with async-io
+      run: cargo test --features async-io --test async_api_test -- --include-ignored --nocapture
+
     - name: Run clippy
       run: cargo clippy --all-targets -- -D warnings
+
+    - name: Run clippy with tokio feature
+      run: cargo clippy --all-targets --features tokio -- -D warnings
+
+    - name: Run clippy with async-io feature
+      run: cargo clippy --all-targets --features async-io -- -D warnings
       
     - name: Check formatting
       run: cargo fmt --all -- --check

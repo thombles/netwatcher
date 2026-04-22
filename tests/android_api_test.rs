@@ -3,6 +3,7 @@
 
 #![cfg(target_os = "linux")]
 
+use std::collections::VecDeque;
 use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
@@ -13,6 +14,7 @@ use std::time::{Duration, Instant};
 enum EventKind {
     List,
     Watch,
+    AsyncWatch,
 }
 
 #[derive(Debug)]
@@ -55,8 +57,11 @@ fn android_list_and_watch_interfaces() {
         .expect("failed to start activity");
     assert!(status.success(), "activity start failed");
 
+    let mut pending_events = VecDeque::new();
+
     expect_event(
         &rx,
+        &mut pending_events,
         EventKind::List,
         60,
         "LIST_IPS initial without wlan0",
@@ -64,9 +69,18 @@ fn android_list_and_watch_interfaces() {
     );
     expect_event(
         &rx,
+        &mut pending_events,
         EventKind::Watch,
         60,
         "WATCH_IPS initial without wlan0",
+        |body| !body.contains("wlan0:"),
+    );
+    expect_event(
+        &rx,
+        &mut pending_events,
+        EventKind::AsyncWatch,
+        60,
+        "ASYNC_WATCH_IPS initial without wlan0",
         |body| !body.contains("wlan0:"),
     );
 
@@ -75,9 +89,18 @@ fn android_list_and_watch_interfaces() {
 
     expect_event(
         &rx,
+        &mut pending_events,
         EventKind::Watch,
         60,
         "WATCH_IPS after enabling Wi-Fi",
+        |body| body.contains("wlan0:"),
+    );
+    expect_event(
+        &rx,
+        &mut pending_events,
+        EventKind::AsyncWatch,
+        60,
+        "ASYNC_WATCH_IPS after enabling Wi-Fi",
         |body| body.contains("wlan0:"),
     );
 
@@ -86,9 +109,18 @@ fn android_list_and_watch_interfaces() {
 
     expect_event(
         &rx,
+        &mut pending_events,
         EventKind::Watch,
         60,
         "WATCH_IPS after disabling Wi-Fi",
+        |body| !body.contains("wlan0:"),
+    );
+    expect_event(
+        &rx,
+        &mut pending_events,
+        EventKind::AsyncWatch,
+        60,
+        "ASYNC_WATCH_IPS after disabling Wi-Fi",
         |body| !body.contains("wlan0:"),
     );
 }
@@ -127,6 +159,12 @@ fn parse_log_line(line: &str) -> Option<Event> {
         return Some(Event {
             kind: EventKind::Watch,
             body: trimmed[idx + "WATCH_IPS:".len()..].trim().to_string(),
+        });
+    }
+    if let Some(idx) = trimmed.find("ASYNC_WATCH_IPS:") {
+        return Some(Event {
+            kind: EventKind::AsyncWatch,
+            body: trimmed[idx + "ASYNC_WATCH_IPS:".len()..].trim().to_string(),
         });
     }
     None
@@ -228,6 +266,7 @@ fn wait_for_wifi_enabled(enabled: bool, timeout_secs: u64, ctx: &str) {
 
 fn expect_event(
     rx: &Receiver<Event>,
+    pending_events: &mut VecDeque<Event>,
     kind: EventKind,
     timeout_secs: u64,
     ctx: &str,
@@ -237,6 +276,20 @@ fn expect_event(
     let mut last_body = None;
 
     loop {
+        let mut remaining_events = VecDeque::new();
+        while let Some(event) = pending_events.pop_front() {
+            if event.kind != kind {
+                remaining_events.push_back(event);
+                continue;
+            }
+            if predicate(&event.body) {
+                *pending_events = remaining_events;
+                return;
+            }
+            last_body = Some(event.body);
+        }
+        *pending_events = remaining_events;
+
         let now = Instant::now();
         if now >= deadline {
             match last_body {
@@ -251,6 +304,7 @@ fn expect_event(
             .recv_timeout(deadline.saturating_duration_since(now))
             .unwrap_or_else(|_| panic!("timeout waiting for {ctx} {kind:?}"));
         if ev.kind != kind {
+            pending_events.push_back(ev);
             continue;
         }
         if predicate(&ev.body) {

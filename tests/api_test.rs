@@ -2,7 +2,69 @@ use netwatcher::{list_interfaces, IpRecord};
 use std::net::{IpAddr, Ipv4Addr};
 
 #[cfg(any(target_os = "windows", target_os = "linux", target_vendor = "apple"))]
+use netwatcher::{watch_interfaces, Update, WatchHandle};
+#[cfg(any(target_os = "windows", target_os = "linux", target_vendor = "apple"))]
+use std::sync::{Arc, Condvar, Mutex};
+#[cfg(any(target_os = "windows", target_os = "linux", target_vendor = "apple"))]
+use std::time::Duration;
+
+#[cfg(any(target_os = "windows", target_os = "linux", target_vendor = "apple"))]
 mod helpers;
+
+#[cfg(any(target_os = "windows", target_os = "linux", target_vendor = "apple"))]
+fn setup_callback_handler() -> (
+    impl Fn(usize) + 'static,
+    Arc<Mutex<Vec<Update>>>,
+    WatchHandle,
+) {
+    let updates = Arc::new(Mutex::new(Vec::<Update>::new()));
+    let updates_1 = updates.clone();
+    let updates_2 = updates.clone();
+
+    let callback_received = Arc::new(Condvar::new());
+    let callback_received_1 = callback_received.clone();
+
+    let handle = watch_interfaces(move |update| {
+        let mut updates_guard = updates_1.lock().unwrap();
+        updates_guard.push(update);
+        let count = updates_guard.len();
+        println!(
+            "callback #{}: received update with {} interfaces",
+            count,
+            updates_guard.last().unwrap().interfaces.len()
+        );
+        drop(updates_guard);
+        callback_received_1.notify_one();
+    })
+    .expect("failed to create watcher");
+
+    let wait_for_callback = move |expected_count: usize| {
+        let mut updates_guard = updates.lock().unwrap();
+        while updates_guard.len() < expected_count {
+            let result = callback_received
+                .wait_timeout(updates_guard, Duration::from_secs(10))
+                .unwrap();
+            updates_guard = result.0;
+            if result.1.timed_out() {
+                panic!("timeout waiting for callback #{expected_count}");
+            }
+        }
+    };
+
+    (wait_for_callback, updates_2, handle)
+}
+
+#[cfg(any(target_os = "windows", target_os = "linux", target_vendor = "apple"))]
+fn assert_has_ip(
+    updates: &Arc<Mutex<Vec<Update>>>,
+    update_index: usize,
+    ip_record: &IpRecord,
+    should_have: bool,
+) {
+    let updates_guard = updates.lock().unwrap();
+    let update = &updates_guard[update_index];
+    helpers::assert_update_has_ip(update, ip_record, should_have);
+}
 
 #[test]
 fn test_list_interfaces_has_loopback() {
@@ -25,7 +87,6 @@ fn test_list_interfaces_has_loopback() {
 #[cfg(any(target_os = "windows", target_os = "linux", target_vendor = "apple"))]
 fn test_watch_interfaces_loopback_changes() {
     use helpers::sys::*;
-    use helpers::*;
 
     let loopback_interface = discover_loopback_interface();
     println!("discovered loopback interface: '{loopback_interface}'");

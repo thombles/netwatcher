@@ -42,6 +42,27 @@
 //! // ...
 //! drop(handle);
 //! ```
+//!
+//! ## Async watch example
+//!
+//! ```no_run
+//! # #[cfg(all(target_os = "linux", feature = "tokio"))]
+//! # {
+//! use netwatcher::async_adapter::Tokio;
+//!
+//! let runtime = tokio::runtime::Builder::new_current_thread()
+//!     .enable_all()
+//!     .build()
+//!     .unwrap();
+//! runtime.block_on(async {
+//!     let mut watch = netwatcher::watch_interfaces_async::<Tokio>().unwrap();
+//!     loop {
+//!         let update = watch.changed().await;
+//!         println!("Current interface map: {:#?}", update.interfaces);
+//!     }
+//! });
+//! # }
+//! ```
 
 use std::{
     collections::{HashMap, HashSet},
@@ -49,7 +70,17 @@ use std::{
     ops::Sub,
 };
 
+#[cfg(any(target_os = "linux", target_vendor = "apple"))]
+use std::{
+    future::Future,
+    os::fd::{BorrowedFd, OwnedFd},
+    pin::Pin,
+};
+
 mod error;
+
+#[cfg(any(windows, target_os = "android"))]
+mod async_callback;
 
 #[cfg_attr(windows, path = "list_win.rs")]
 #[cfg_attr(unix, path = "list_unix.rs")]
@@ -63,6 +94,8 @@ mod android;
 #[cfg_attr(target_os = "linux", path = "watch_linux.rs")]
 #[cfg_attr(target_os = "android", path = "watch_android.rs")]
 mod watch;
+
+pub mod async_adapter;
 
 type IfIndex = u32;
 
@@ -135,11 +168,11 @@ pub struct InterfaceDiff {
     pub addrs_removed: Vec<IpRecord>,
 }
 
-#[derive(Default, PartialEq, Eq)]
+#[derive(Default, PartialEq, Eq, Clone)]
 struct List(HashMap<IfIndex, Interface>);
 
 impl List {
-    fn diff_from(&self, prev: &List) -> UpdateDiff {
+    fn update_from(&self, prev: &List) -> Update {
         let prev_index_set: HashSet<IfIndex> = prev.0.keys().cloned().collect();
         let curr_index_set: HashSet<IfIndex> = self.0.keys().cloned().collect();
         let added = curr_index_set.sub(&prev_index_set).into_iter().collect();
@@ -173,10 +206,13 @@ impl List {
                 },
             );
         }
-        UpdateDiff {
-            added,
-            removed,
-            modified,
+        Update {
+            interfaces: self.0.clone(),
+            diff: UpdateDiff {
+                added,
+                removed,
+                modified,
+            },
         }
     }
 }
@@ -189,6 +225,51 @@ impl List {
 /// Do not drop the handle from within the callback itself. It will probably deadlock.
 pub struct WatchHandle {
     _inner: watch::WatchHandle,
+}
+
+/// A handle that yields `Update`s asynchronously when network interfaces change.
+pub struct AsyncWatch {
+    _inner: watch::AsyncWatch,
+}
+
+impl AsyncWatch {
+    /// Wait for the next interface snapshot that differs from the last snapshot yielded.
+    ///
+    /// The first call returns the current interface snapshot immediately. Subsequent calls wait
+    /// until there is a change.
+    ///
+    /// This method is infallible. Once a watch has been created successfully, later failures to
+    /// read platform notifications or re-list interfaces are swallowed and no update is emitted
+    /// for that event.
+    pub async fn changed(&mut self) -> Update {
+        self._inner.changed().await
+    }
+}
+
+/// A runtime adapter that can register an existing nonblocking file descriptor for async waiting.
+///
+/// On Windows and Android, the adapter type is still required for API consistency, but the
+/// platform watcher uses callback-driven notifications and does not invoke the adapter.
+pub trait AsyncFdAdapter {
+    #[cfg(any(target_os = "linux", target_vendor = "apple"))]
+    fn register(fd: OwnedFd) -> std::io::Result<Box<dyn AsyncFdRegistration>>;
+}
+
+#[cfg(any(target_os = "linux", target_vendor = "apple"))]
+pub type AsyncFdReadableFuture<'a> =
+    Pin<Box<dyn Future<Output = std::io::Result<Box<dyn AsyncFdReadyGuard + 'a>>> + 'a>>;
+
+#[cfg(any(target_os = "linux", target_vendor = "apple"))]
+/// Registered readiness source for a watch file descriptor.
+pub trait AsyncFdRegistration: Send + Sync {
+    fn readable(&self) -> AsyncFdReadableFuture<'_>;
+}
+
+#[cfg(any(target_os = "linux", target_vendor = "apple"))]
+/// Guard returned once the runtime reports the watch file descriptor as readable.
+pub trait AsyncFdReadyGuard {
+    fn fd(&self) -> BorrowedFd<'_>;
+    fn clear_ready(&mut self);
 }
 
 /// Retrieve information about all enabled network interfaces and their IP addresses.
@@ -216,4 +297,11 @@ pub fn watch_interfaces<F: FnMut(Update) + Send + 'static>(
     callback: F,
 ) -> Result<WatchHandle, Error> {
     watch::watch_interfaces(callback).map(|handle| WatchHandle { _inner: handle })
+}
+
+/// Retrieve interface information and watch for changes asynchronously using the given runtime adapter.
+///
+/// The first call to `changed()` returns the current interface snapshot immediately.
+pub fn watch_interfaces_async<A: AsyncFdAdapter>() -> Result<AsyncWatch, Error> {
+    watch::watch_interfaces_async::<A>().map(|handle| AsyncWatch { _inner: handle })
 }

@@ -10,9 +10,9 @@
 | Platform | Min Version | List | Watch | Notes                                                                                 |
 |----------|-------------|------|-------|---------------------------------------------------------------------------------------|
 | Windows  | -           | ✅    | ✅     |                                                                                       |
-| Mac      | -           | ✅    | ✅     | Watch creates background thread                                                       |
-| Linux    | -           | ✅    | ✅     | Watch creates background thread                                                       |
-| iOS      | -           | ✅    | ✅     | Watch creates background thread                                                       |
+| Mac      | -           | ✅    | ✅     | Sync watch creates background thread                                                       |
+| Linux    | -           | ✅    | ✅     | Sync watch creates background thread                                                       |
+| iOS      | -           | ✅    | ✅     | Sync watch creates background thread                                                       |
 | Android  | 5.0         | ✅    | ✅     | Watch requires extra setup. See Android Setup instructions below.             |
 
 ## Usage
@@ -49,6 +49,29 @@ let handle = netwatcher::watch_interfaces(|update| {
 // keep `handle` alive as long as you want callbacks
 // ...
 drop(handle);
+```
+
+### Async watch
+
+There is also an async watch API. This can be more efficient as it will avoid creating dedicated background threads for watchers. Call `watch_interfaces_async::<T>()` with a suitable runtime adapter, e.g. `Tokio` or `AsyncIo`. These are provided by the `tokio` and `async-io` features, or you can implement your own.
+
+```rust
+use netwatcher::async_adapter::Tokio;
+
+let runtime = tokio::runtime::Builder::new_current_thread()
+    .enable_all()
+    .build()
+    .unwrap();
+
+runtime.block_on(async {
+    let mut watch = netwatcher::watch_interfaces_async::<Tokio>().unwrap();
+
+    // changed() will fire once immediately with the existing state
+    loop {
+        let update = watch.changed().await;
+        println!("Current interface map: {:#?}", update.interfaces);
+    }
+});
 ```
 
 ### Android Setup

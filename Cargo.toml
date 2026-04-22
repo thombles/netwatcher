@@ -13,10 +13,19 @@ exclude = [
     "android/*",
 ]
 
+[features]
+default = []
+tokio = ["dep:tokio"]
+async-io = ["dep:async-io"]
+
 [dependencies]
 
 [target.'cfg(any(target_vendor = "apple", target_os = "linux", target_os = "android"))'.dependencies]
 nix = { version = "0.31.2", features = ["net"] }
+
+[target.'cfg(any(target_vendor = "apple", target_os = "linux"))'.dependencies]
+tokio = { version = "1", features = ["net", "rt"], optional = true }
+async-io = { version = "2", optional = true }
 
 [target.'cfg(target_os = "android")'.dependencies]
 ndk-context = "0.1.1"
@@ -32,3 +41,7 @@ features = [
 
 [build-dependencies]
 android-build = "0.1.3"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["net", "rt"] }
+async-io = "2"

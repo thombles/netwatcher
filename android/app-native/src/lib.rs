@@ -6,13 +6,38 @@ use jni::{
 use netwatcher::{Interface, WatchHandle};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
+use std::thread::JoinHandle;
+use tokio::sync::oneshot;
 
 static GUI_CALLBACK: OnceLock<Arc<Mutex<Option<GuiCallback>>>> = OnceLock::new();
 static WATCHER_HANDLE: OnceLock<Arc<Mutex<Option<WatchHandle>>>> = OnceLock::new();
+static ASYNC_WATCHER: OnceLock<Arc<Mutex<Option<AsyncWatcher>>>> = OnceLock::new();
 
 struct GuiCallback {
     jvm: jni::JavaVM,
     callback_object: Global<JObject<'static>>,
+}
+
+struct AsyncWatcher {
+    stop_tx: Option<oneshot::Sender<()>>,
+    join_handle: Option<JoinHandle<()>>,
+}
+
+impl AsyncWatcher {
+    fn stop(&mut self) {
+        if let Some(stop_tx) = self.stop_tx.take() {
+            let _ = stop_tx.send(());
+        }
+        if let Some(join_handle) = self.join_handle.take() {
+            let _ = join_handle.join();
+        }
+    }
+}
+
+impl Drop for AsyncWatcher {
+    fn drop(&mut self) {
+        self.stop();
+    }
 }
 
 fn init_android_logging() {
@@ -124,12 +149,48 @@ fn start_interface_watching() {
             log::error!("failed to start network interface watching: {e:?}");
         }
     }
+
+    let (stop_tx, mut stop_rx) = oneshot::channel();
+    let join_handle = std::thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("failed to build tokio runtime for async watcher");
+        runtime.block_on(async move {
+            let Ok(mut watch) =
+                netwatcher::watch_interfaces_async::<netwatcher::async_adapter::Tokio>()
+            else {
+                log::error!("failed to start async network interface watcher");
+                return;
+            };
+
+            loop {
+                tokio::select! {
+                    _ = &mut stop_rx => break,
+                    update = watch.changed() => {
+                        log_ips("ASYNC_WATCH_IPS", &update.interfaces);
+                    }
+                }
+            }
+        });
+    });
+    let async_storage = ASYNC_WATCHER.get_or_init(|| Arc::new(Mutex::new(None)));
+    *async_storage.lock().unwrap() = Some(AsyncWatcher {
+        stop_tx: Some(stop_tx),
+        join_handle: Some(join_handle),
+    });
 }
 
 fn stop_interface_watching() {
     if let Some(handle_storage) = WATCHER_HANDLE.get() {
         *handle_storage.lock().unwrap() = None;
         log::info!("network interface watching stopped");
+    }
+
+    if let Some(async_storage) = ASYNC_WATCHER.get() {
+        if let Some(mut async_watcher) = async_storage.lock().unwrap().take() {
+            async_watcher.stop();
+        }
     }
 
     if let Some(callback_storage) = GUI_CALLBACK.get() {

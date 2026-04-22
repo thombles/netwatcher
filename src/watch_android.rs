@@ -4,73 +4,142 @@ use jni::{jni_sig, jni_str, Env, EnvUnowned, NativeMethod};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::OnceLock;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
-// Include the DEX file built by build.rs
+use crate::async_callback::{
+    empty_async_callback_queue, next_async_list, push_async_list, AsyncCallbackQueue,
+};
+
 const NETWATCHER_DEX_BYTES: &[u8] = include_bytes!(env!("NETWATCHER_DEX_PATH"));
 
 static STATE: OnceLock<Arc<Mutex<State>>> = OnceLock::new();
 
+type WatcherId = usize;
+
 struct State {
-    watchers: HashMap<WatcherId, Box<dyn FnMut(Update) + Send + 'static>>,
+    sync_watchers: HashMap<WatcherId, Box<dyn FnMut(Update) + Send + 'static>>,
+    async_watchers: HashMap<WatcherId, AsyncCallbackQueue>,
     current_interfaces: List,
-    next_watcher_id: usize,
+    next_watcher_id: WatcherId,
     java_support: Option<Global<JObject<'static>>>,
 }
-
-type WatcherId = usize;
 
 pub(crate) struct WatchHandle {
     id: WatcherId,
 }
 
-impl Drop for WatchHandle {
-    fn drop(&mut self) {
-        if let Some(state_ref) = STATE.get() {
-            let mut state = state_ref.lock().unwrap();
-            state.watchers.remove(&self.id);
+pub(crate) struct AsyncWatch {
+    id: WatcherId,
+    queue: AsyncCallbackQueue,
+    prev_list: List,
+}
 
-            if state.watchers.is_empty() {
-                if let Some(ref support_object) = state.java_support {
-                    let _ = stop_java_watching(support_object);
-                }
-                state.java_support = None;
+impl Drop for AsyncWatch {
+    fn drop(&mut self) {
+        unregister_watcher(self.id);
+    }
+}
+
+impl AsyncWatch {
+    pub(crate) async fn changed(&mut self) -> Update {
+        loop {
+            let new_list = next_async_list(&self.queue).await;
+            if new_list == self.prev_list {
+                continue;
             }
+            let update = new_list.update_from(&self.prev_list);
+            self.prev_list = new_list;
+            return update;
         }
     }
 }
 
+impl Drop for WatchHandle {
+    fn drop(&mut self) {
+        unregister_watcher(self.id);
+    }
+}
+
 pub(crate) fn watch_interfaces<F: FnMut(Update) + Send + 'static>(
-    mut callback: F,
+    callback: F,
 ) -> Result<WatchHandle, Error> {
-    let state_ref = STATE.get_or_init(|| {
-        Arc::new(Mutex::new(State {
-            watchers: HashMap::new(),
-            current_interfaces: List::default(),
-            next_watcher_id: 1,
-            java_support: None,
-        }))
-    });
+    let id = register_sync_watcher(Box::new(callback))?;
+    Ok(WatchHandle { id })
+}
+
+#[allow(clippy::extra_unused_type_parameters)]
+pub(crate) fn watch_interfaces_async<A: crate::AsyncFdAdapter>() -> Result<AsyncWatch, Error> {
+    let queue = empty_async_callback_queue();
+    let id = register_async_watcher(queue.clone())?;
+    Ok(AsyncWatch {
+        id,
+        queue,
+        prev_list: List::default(),
+    })
+}
+
+fn register_sync_watcher(
+    mut callback: Box<dyn FnMut(Update) + Send + 'static>,
+) -> Result<WatcherId, Error> {
+    let state_ref = STATE.get_or_init(init_state).clone();
 
     let current_list = list::list_interfaces()?;
-
-    let initial_update = Update {
-        interfaces: current_list.0.clone(),
-        diff: current_list.diff_from(&List::default()),
-    };
-    callback(initial_update);
+    callback(current_list.update_from(&List::default()));
 
     let mut state = state_ref.lock().unwrap();
     let id = state.next_watcher_id;
-    state.next_watcher_id += 1;
-    state.current_interfaces = current_list;
-    let is_first_watcher = state.watchers.is_empty();
-    state.watchers.insert(id, Box::new(callback));
+    let is_first_watcher = state.sync_watchers.is_empty() && state.async_watchers.is_empty();
     if is_first_watcher {
         start_java_watching(&mut state)?;
     }
-    Ok(WatchHandle { id })
+    state.next_watcher_id += 1;
+    state.current_interfaces = current_list;
+    state.sync_watchers.insert(id, callback);
+    Ok(id)
+}
+
+fn register_async_watcher(queue: AsyncCallbackQueue) -> Result<WatcherId, Error> {
+    let state_ref = STATE.get_or_init(init_state).clone();
+    let current_list = list::list_interfaces()?;
+    push_async_list(&queue, current_list.clone());
+
+    let mut state = state_ref.lock().unwrap();
+    let id = state.next_watcher_id;
+    let is_first_watcher = state.sync_watchers.is_empty() && state.async_watchers.is_empty();
+    if is_first_watcher {
+        start_java_watching(&mut state)?;
+    }
+    state.next_watcher_id += 1;
+    state.current_interfaces = current_list;
+    state.async_watchers.insert(id, queue);
+    Ok(id)
+}
+
+fn unregister_watcher(id: WatcherId) {
+    let Some(state_ref) = STATE.get() else {
+        return;
+    };
+
+    let mut state = state_ref.lock().unwrap();
+    state.sync_watchers.remove(&id);
+    state.async_watchers.remove(&id);
+
+    if state.sync_watchers.is_empty() && state.async_watchers.is_empty() {
+        if let Some(ref support_object) = state.java_support {
+            let _ = stop_java_watching(support_object);
+        }
+        state.java_support = None;
+    }
+}
+
+fn init_state() -> Arc<Mutex<State>> {
+    Arc::new(Mutex::new(State {
+        sync_watchers: HashMap::new(),
+        async_watchers: HashMap::new(),
+        current_interfaces: List::default(),
+        next_watcher_id: 1,
+        java_support: None,
+    }))
 }
 
 fn start_java_watching(state: &mut State) -> Result<(), Error> {
@@ -119,7 +188,6 @@ fn inject_dex_class<'a>(
     let temp_dex_path = PathBuf::from(cache_dir_rust.clone()).join("netwatcher.dex");
     fs::write(&temp_dex_path, NETWATCHER_DEX_BYTES)?;
 
-    // dex file must not be writable or it won't be loaded
     let mut perms = fs::metadata(&temp_dex_path)?.permissions();
     perms.set_readonly(true);
     fs::set_permissions(&temp_dex_path, perms)?;
@@ -202,13 +270,14 @@ pub extern "system" fn Java_net_octet_1stream_netwatcher_NetwatcherSupportAndroi
     if new_list == state.current_interfaces {
         return;
     }
-    let diff = new_list.diff_from(&state.current_interfaces);
-    let update = Update {
-        interfaces: new_list.0.clone(),
-        diff,
-    };
+
+    let update = new_list.update_from(&state.current_interfaces);
     state.current_interfaces = new_list;
-    for callback in state.watchers.values_mut() {
+
+    for callback in state.sync_watchers.values_mut() {
         callback(update.clone());
+    }
+    for queue in state.async_watchers.values() {
+        push_async_list(queue, state.current_interfaces.clone());
     }
 }
