@@ -131,7 +131,7 @@ pub extern "system" fn Java_net_octet_1stream_netwatcher_netwatchertestapp_MainA
 }
 
 fn start_interface_watching() {
-    let handle = netwatcher::watch_interfaces(|update| {
+    let handle = netwatcher::watch_interfaces_with_callback(|update| {
         log::info!(
             "interface update received: {} interfaces",
             update.interfaces.len()
@@ -179,6 +179,18 @@ fn start_interface_watching() {
     *async_storage.lock().unwrap() = Some(AsyncWatcher {
         stop_tx: Some(stop_tx),
         join_handle: Some(join_handle),
+    });
+
+    std::thread::spawn(move || {
+        let Ok(mut watch) = netwatcher::watch_interfaces_blocking() else {
+            log::error!("failed to start blocking network interface watcher");
+            return;
+        };
+
+        loop {
+            let update = watch.updated();
+            log_ips("BLOCKING_WATCH_IPS", &update.interfaces);
+        }
     });
 }
 

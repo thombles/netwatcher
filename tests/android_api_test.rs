@@ -1,5 +1,5 @@
-//! Android integration test for list_interfaces, watch_interfaces, and
-//! watch_interfaces_async via the test app.
+//! Android integration test for list_interfaces, watch_interfaces_with_callback,
+//! watch_interfaces_blocking, and watch_interfaces_async via the test app.
 //! Ignored by default: requires Linux host with Android SDK + emulator + adb in PATH.
 
 #![cfg(target_os = "linux")]
@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 enum EventKind {
     List,
     Watch,
+    BlockingWatch,
     AsyncWatch,
 }
 
@@ -79,6 +80,14 @@ fn android_list_and_watch_interfaces() {
     expect_event(
         &rx,
         &mut pending_events,
+        EventKind::BlockingWatch,
+        60,
+        "BLOCKING_WATCH_IPS initial without wlan0",
+        |body| !body.contains("wlan0:"),
+    );
+    expect_event(
+        &rx,
+        &mut pending_events,
         EventKind::AsyncWatch,
         60,
         "ASYNC_WATCH_IPS initial without wlan0",
@@ -99,6 +108,14 @@ fn android_list_and_watch_interfaces() {
     expect_event(
         &rx,
         &mut pending_events,
+        EventKind::BlockingWatch,
+        60,
+        "BLOCKING_WATCH_IPS after enabling Wi-Fi",
+        |body| body.contains("wlan0:"),
+    );
+    expect_event(
+        &rx,
+        &mut pending_events,
         EventKind::AsyncWatch,
         60,
         "ASYNC_WATCH_IPS after enabling Wi-Fi",
@@ -114,6 +131,14 @@ fn android_list_and_watch_interfaces() {
         EventKind::Watch,
         60,
         "WATCH_IPS after disabling Wi-Fi",
+        |body| !body.contains("wlan0:"),
+    );
+    expect_event(
+        &rx,
+        &mut pending_events,
+        EventKind::BlockingWatch,
+        60,
+        "BLOCKING_WATCH_IPS after disabling Wi-Fi",
         |body| !body.contains("wlan0:"),
     );
     expect_event(
@@ -160,6 +185,14 @@ fn parse_log_line(line: &str) -> Option<Event> {
         return Some(Event {
             kind: EventKind::AsyncWatch,
             body: trimmed[idx + "ASYNC_WATCH_IPS:".len()..].trim().to_string(),
+        });
+    }
+    if let Some(idx) = trimmed.find("BLOCKING_WATCH_IPS:") {
+        return Some(Event {
+            kind: EventKind::BlockingWatch,
+            body: trimmed[idx + "BLOCKING_WATCH_IPS:".len()..]
+                .trim()
+                .to_string(),
         });
     }
     if let Some(idx) = trimmed.find("WATCH_IPS:") {

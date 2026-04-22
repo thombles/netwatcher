@@ -3,8 +3,9 @@ use std::time::Duration;
 fn main() {
     println!("Watching for changes for 30 seconds...");
 
-    let handle = netwatcher::watch_interfaces(|update| {
+    let handle = netwatcher::watch_interfaces_with_callback(|update| {
         println!("Interface update!");
+        println!("Initial: {}", update.is_initial);
         println!("State: {:#?}", update.interfaces);
         println!("Diff: {:#?}", update.diff);
     })

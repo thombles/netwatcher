@@ -30,8 +30,9 @@ for i in interfaces.values() {
 ### Watching for changes to interfaces
 
 ```rust
-let handle = netwatcher::watch_interfaces(|update| {
+let handle = netwatcher::watch_interfaces_with_callback(|update| {
     // This callback will fire once immediately with the existing state
+    println!("Initial update: {}", update.is_initial);
 
     // Update includes the latest snapshot of all interfaces
     println!("Current interface map: {:#?}", update.interfaces);

@@ -7,7 +7,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::async_callback::{
-    empty_async_callback_queue, next_async_list, push_async_list, AsyncCallbackQueue,
+    next_async_list, push_async_list, shared_async_callback_queue, wait_next_list,
+    SharedAsyncCallbackQueue,
 };
 
 const NETWATCHER_DEX_BYTES: &[u8] = include_bytes!(env!("NETWATCHER_DEX_PATH"));
@@ -17,8 +18,8 @@ static STATE: OnceLock<Arc<Mutex<State>>> = OnceLock::new();
 type WatcherId = usize;
 
 struct State {
-    sync_watchers: HashMap<WatcherId, Box<dyn FnMut(Update) + Send + 'static>>,
-    async_watchers: HashMap<WatcherId, AsyncCallbackQueue>,
+    callback_watchers: HashMap<WatcherId, Box<dyn FnMut(Update) + Send + 'static>>,
+    queued_watchers: HashMap<WatcherId, SharedAsyncCallbackQueue>,
     current_interfaces: List,
     next_watcher_id: WatcherId,
     java_support: Option<Global<JObject<'static>>>,
@@ -30,8 +31,14 @@ pub(crate) struct WatchHandle {
 
 pub(crate) struct AsyncWatch {
     id: WatcherId,
-    queue: AsyncCallbackQueue,
-    prev_list: List,
+    queue: SharedAsyncCallbackQueue,
+    cursor: crate::UpdateCursor,
+}
+
+pub(crate) struct BlockingWatch {
+    id: WatcherId,
+    queue: SharedAsyncCallbackQueue,
+    cursor: crate::UpdateCursor,
 }
 
 impl Drop for AsyncWatch {
@@ -44,12 +51,26 @@ impl AsyncWatch {
     pub(crate) async fn changed(&mut self) -> Update {
         loop {
             let new_list = next_async_list(&self.queue).await;
-            if new_list == self.prev_list {
-                continue;
+            if let Some(update) = self.cursor.advance(new_list) {
+                return update;
             }
-            let update = new_list.update_from(&self.prev_list);
-            self.prev_list = new_list;
-            return update;
+        }
+    }
+}
+
+impl Drop for BlockingWatch {
+    fn drop(&mut self) {
+        unregister_watcher(self.id);
+    }
+}
+
+impl BlockingWatch {
+    pub(crate) fn updated(&mut self) -> Update {
+        loop {
+            let new_list = wait_next_list(&self.queue);
+            if let Some(update) = self.cursor.advance(new_list) {
+                return update;
+            }
         }
     }
 }
@@ -60,58 +81,68 @@ impl Drop for WatchHandle {
     }
 }
 
-pub(crate) fn watch_interfaces<F: FnMut(Update) + Send + 'static>(
+pub(crate) fn watch_interfaces_with_callback<F: FnMut(Update) + Send + 'static>(
     callback: F,
 ) -> Result<WatchHandle, Error> {
-    let id = register_sync_watcher(Box::new(callback))?;
+    let id = register_callback_watcher(Box::new(callback))?;
     Ok(WatchHandle { id })
 }
 
 #[allow(clippy::extra_unused_type_parameters)]
 pub(crate) fn watch_interfaces_async<A: crate::AsyncFdAdapter>() -> Result<AsyncWatch, Error> {
-    let queue = empty_async_callback_queue();
-    let id = register_async_watcher(queue.clone())?;
+    let queue = shared_async_callback_queue();
+    let id = register_queued_watcher(queue.clone())?;
     Ok(AsyncWatch {
         id,
         queue,
-        prev_list: List::default(),
+        cursor: crate::UpdateCursor::default(),
     })
 }
 
-fn register_sync_watcher(
+pub(crate) fn watch_interfaces_blocking() -> Result<BlockingWatch, Error> {
+    let queue = shared_async_callback_queue();
+    let id = register_queued_watcher(queue.clone())?;
+    Ok(BlockingWatch {
+        id,
+        queue,
+        cursor: crate::UpdateCursor::default(),
+    })
+}
+
+fn register_callback_watcher(
     mut callback: Box<dyn FnMut(Update) + Send + 'static>,
 ) -> Result<WatcherId, Error> {
     let state_ref = STATE.get_or_init(init_state).clone();
 
     let current_list = list::list_interfaces()?;
-    callback(current_list.update_from(&List::default()));
+    callback(current_list.initial_update());
 
     let mut state = state_ref.lock().unwrap();
     let id = state.next_watcher_id;
-    let is_first_watcher = state.sync_watchers.is_empty() && state.async_watchers.is_empty();
+    let is_first_watcher = state.callback_watchers.is_empty() && state.queued_watchers.is_empty();
     if is_first_watcher {
         start_java_watching(&mut state)?;
     }
     state.next_watcher_id += 1;
     state.current_interfaces = current_list;
-    state.sync_watchers.insert(id, callback);
+    state.callback_watchers.insert(id, callback);
     Ok(id)
 }
 
-fn register_async_watcher(queue: AsyncCallbackQueue) -> Result<WatcherId, Error> {
+fn register_queued_watcher(queue: SharedAsyncCallbackQueue) -> Result<WatcherId, Error> {
     let state_ref = STATE.get_or_init(init_state).clone();
     let current_list = list::list_interfaces()?;
     push_async_list(&queue, current_list.clone());
 
     let mut state = state_ref.lock().unwrap();
     let id = state.next_watcher_id;
-    let is_first_watcher = state.sync_watchers.is_empty() && state.async_watchers.is_empty();
+    let is_first_watcher = state.callback_watchers.is_empty() && state.queued_watchers.is_empty();
     if is_first_watcher {
         start_java_watching(&mut state)?;
     }
     state.next_watcher_id += 1;
     state.current_interfaces = current_list;
-    state.async_watchers.insert(id, queue);
+    state.queued_watchers.insert(id, queue);
     Ok(id)
 }
 
@@ -121,10 +152,10 @@ fn unregister_watcher(id: WatcherId) {
     };
 
     let mut state = state_ref.lock().unwrap();
-    state.sync_watchers.remove(&id);
-    state.async_watchers.remove(&id);
+    state.callback_watchers.remove(&id);
+    state.queued_watchers.remove(&id);
 
-    if state.sync_watchers.is_empty() && state.async_watchers.is_empty() {
+    if state.callback_watchers.is_empty() && state.queued_watchers.is_empty() {
         if let Some(ref support_object) = state.java_support {
             let _ = stop_java_watching(support_object);
         }
@@ -134,8 +165,8 @@ fn unregister_watcher(id: WatcherId) {
 
 fn init_state() -> Arc<Mutex<State>> {
     Arc::new(Mutex::new(State {
-        sync_watchers: HashMap::new(),
-        async_watchers: HashMap::new(),
+        callback_watchers: HashMap::new(),
+        queued_watchers: HashMap::new(),
         current_interfaces: List::default(),
         next_watcher_id: 1,
         java_support: None,
@@ -274,10 +305,10 @@ pub extern "system" fn Java_net_octet_1stream_netwatcher_NetwatcherSupportAndroi
     let update = new_list.update_from(&state.current_interfaces);
     state.current_interfaces = new_list;
 
-    for callback in state.sync_watchers.values_mut() {
+    for callback in state.callback_watchers.values_mut() {
         callback(update.clone());
     }
-    for queue in state.async_watchers.values() {
+    for queue in state.queued_watchers.values() {
         push_async_list(queue, state.current_interfaces.clone());
     }
 }

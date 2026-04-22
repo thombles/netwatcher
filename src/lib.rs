@@ -22,8 +22,9 @@
 //! ## Watch example
 //!
 //! ```
-//! let handle = netwatcher::watch_interfaces(|update| {
+//! let handle = netwatcher::watch_interfaces_with_callback(|update| {
 //!     // This callback will fire once immediately with the existing state
+//!     assert_eq!(update.is_initial, update.diff.removed.is_empty());
 //!
 //!     // Update includes the latest snapshot of all interfaces
 //!     println!("Current interface map: {:#?}", update.interfaces);
@@ -81,6 +82,9 @@ mod error;
 
 #[cfg(any(windows, target_os = "android"))]
 mod async_callback;
+
+#[cfg(any(target_os = "linux", target_vendor = "apple"))]
+mod watch_fd;
 
 #[cfg_attr(windows, path = "list_win.rs")]
 #[cfg_attr(unix, path = "list_unix.rs")]
@@ -142,12 +146,14 @@ impl Interface {
     }
 }
 
-/// Information delivered via callback when a network interface change is detected.
+/// Information delivered when a network interface snapshot changes.
 ///
 /// This contains up-to-date information about all interfaces, plus a diff which
-/// details which interfaces and IP addresses have changed since the last callback.
+/// details which interfaces and IP addresses have changed since the previous update.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Update {
+    /// Whether this update represents the initial existing interface state.
+    pub is_initial: bool,
     pub interfaces: HashMap<IfIndex, Interface>,
     pub diff: UpdateDiff,
 }
@@ -172,7 +178,15 @@ pub struct InterfaceDiff {
 struct List(HashMap<IfIndex, Interface>);
 
 impl List {
+    fn initial_update(&self) -> Update {
+        self.update_from_with_flag(&List::default(), true)
+    }
+
     fn update_from(&self, prev: &List) -> Update {
+        self.update_from_with_flag(prev, false)
+    }
+
+    fn update_from_with_flag(&self, prev: &List, is_initial: bool) -> Update {
         let prev_index_set: HashSet<IfIndex> = prev.0.keys().cloned().collect();
         let curr_index_set: HashSet<IfIndex> = self.0.keys().cloned().collect();
         let added = curr_index_set.sub(&prev_index_set).into_iter().collect();
@@ -207,6 +221,7 @@ impl List {
             );
         }
         Update {
+            is_initial,
             interfaces: self.0.clone(),
             diff: UpdateDiff {
                 added,
@@ -214,6 +229,38 @@ impl List {
                 modified,
             },
         }
+    }
+}
+
+struct UpdateCursor {
+    prev_list: List,
+    initial_pending: bool,
+}
+
+impl Default for UpdateCursor {
+    fn default() -> Self {
+        Self {
+            prev_list: List::default(),
+            initial_pending: true,
+        }
+    }
+}
+
+impl UpdateCursor {
+    fn advance(&mut self, new_list: List) -> Option<Update> {
+        if self.initial_pending {
+            self.initial_pending = false;
+            self.prev_list = new_list.clone();
+            return Some(new_list.initial_update());
+        }
+
+        if new_list == self.prev_list {
+            return None;
+        }
+
+        let update = new_list.update_from(&self.prev_list);
+        self.prev_list = new_list;
+        Some(update)
     }
 }
 
@@ -232,6 +279,11 @@ pub struct AsyncWatch {
     _inner: watch::AsyncWatch,
 }
 
+/// A handle that yields `Update`s synchronously when network interfaces change.
+pub struct BlockingWatch {
+    _inner: watch::BlockingWatch,
+}
+
 impl AsyncWatch {
     /// Wait for the next interface snapshot that differs from the last snapshot yielded.
     ///
@@ -243,6 +295,20 @@ impl AsyncWatch {
     /// for that event.
     pub async fn changed(&mut self) -> Update {
         self._inner.changed().await
+    }
+}
+
+impl BlockingWatch {
+    /// Wait for the next interface snapshot that differs from the last snapshot yielded.
+    ///
+    /// The first call returns the current interface snapshot immediately. Subsequent calls wait
+    /// until there is a change.
+    ///
+    /// This method is infallible. Once a watch has been created successfully, later failures to
+    /// read platform notifications or re-list interfaces are swallowed and no update is emitted
+    /// for that event.
+    pub fn updated(&mut self) -> Update {
+        self._inner.updated()
     }
 }
 
@@ -274,7 +340,8 @@ pub trait AsyncFdReadyGuard {
 
 /// Retrieve information about all enabled network interfaces and their IP addresses.
 ///
-/// This is a once-off operation. If you want to detect changes over time, see `watch_interfaces`.
+/// This is a once-off operation. If you want to detect changes over time, see
+/// `watch_interfaces_with_callback`, `watch_interfaces_blocking`, or `watch_interfaces_async`.
 pub fn list_interfaces() -> Result<HashMap<IfIndex, Interface>, Error> {
     list::list_interfaces().map(|list| list.0)
 }
@@ -293,10 +360,17 @@ pub fn list_interfaces() -> Result<HashMap<IfIndex, Interface>, Error> {
 /// We assume that if listing the interfaces worked the first time, then it will continue to work
 /// for as long as the watcher is running. If listing interfaces begins to fail later, those
 /// failures will be swallowed and the callback will not be called for that change event.
-pub fn watch_interfaces<F: FnMut(Update) + Send + 'static>(
+pub fn watch_interfaces_with_callback<F: FnMut(Update) + Send + 'static>(
     callback: F,
 ) -> Result<WatchHandle, Error> {
-    watch::watch_interfaces(callback).map(|handle| WatchHandle { _inner: handle })
+    watch::watch_interfaces_with_callback(callback).map(|handle| WatchHandle { _inner: handle })
+}
+
+/// Retrieve interface information and watch for changes synchronously.
+///
+/// The first call to `updated()` returns the current interface snapshot immediately.
+pub fn watch_interfaces_blocking() -> Result<BlockingWatch, Error> {
+    watch::watch_interfaces_blocking().map(|handle| BlockingWatch { _inner: handle })
 }
 
 /// Retrieve interface information and watch for changes asynchronously using the given runtime adapter.
