@@ -65,7 +65,7 @@ impl Drop for BlockingWatch {
 }
 
 impl BlockingWatch {
-    pub(crate) fn updated(&mut self) -> Update {
+    pub(crate) fn changed(&mut self) -> Update {
         loop {
             let new_list = wait_next_list(&self.queue);
             if let Some(update) = self.cursor.advance(new_list) {

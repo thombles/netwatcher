@@ -188,7 +188,7 @@ fn start_interface_watching() {
         };
 
         loop {
-            let update = watch.updated();
+            let update = watch.changed();
             log_ips("BLOCKING_WATCH_IPS", &update.interfaces);
         }
     });

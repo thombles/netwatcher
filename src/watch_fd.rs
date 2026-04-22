@@ -60,7 +60,7 @@ impl AsyncWatch {
 }
 
 impl BlockingWatch {
-    pub(crate) fn updated(&mut self) -> Update {
+    pub(crate) fn changed(&mut self) -> Update {
         if let Some(initial_update) = self.initial_update.take() {
             return initial_update;
         }

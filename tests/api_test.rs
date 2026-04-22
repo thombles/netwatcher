@@ -154,19 +154,19 @@ fn test_watch_interfaces_blocking_loopback_changes() {
 
     let mut watch = watch_interfaces_blocking().expect("failed to create blocking watcher");
 
-    let initial = watch.updated();
+    let initial = watch.changed();
     assert!(initial.is_initial);
     assert_update_has_ip(&initial, &expected_original, true);
     assert_update_has_ip(&initial, &expected_added, false);
 
     add_ip_to_interface(&loopback_interface, "127.0.0.10");
-    let added = watch.updated();
+    let added = watch.changed();
     assert!(!added.is_initial);
     assert_update_has_ip(&added, &expected_original, true);
     assert_update_has_ip(&added, &expected_added, true);
 
     remove_ip_from_interface(&loopback_interface, "127.0.0.10");
-    let removed = watch.updated();
+    let removed = watch.changed();
     assert!(!removed.is_initial);
     assert_update_has_ip(&removed, &expected_original, true);
     assert_update_has_ip(&removed, &expected_added, false);

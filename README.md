@@ -31,8 +31,8 @@ for i in interfaces.values() {
 
 Choose one of the three watch APIs:
 
-- `watch_interfaces_with_callback`: easiest when you want interface changes pushed into a callback. On macOS, Linux, and iOS this creates a background thread.
-- `watch_interfaces_blocking`: waits in the current thread until there is a change. If nothing changes, `updated()` never returns, so this is best for a dedicated thread or a program with no other work to do until interfaces change.
+- `watch_interfaces_with_callback`: invoke a callback when interface changes occur. On macOS, Linux, and iOS this creates a background thread.
+- `watch_interfaces_blocking`: waits in the current thread until there is a change. If nothing changes, `changed()` never returns, so this is best for a dedicated thread or a program with no other work to do until interfaces change.
 - `watch_interfaces_async::<T>`: allows you to `.await` interface changes by integrating with an async runtime adapter such as `Tokio` or `AsyncIo`.
 
 #### Callback watch
@@ -79,7 +79,7 @@ This waits in the current thread until an update is available.
 let mut watch = netwatcher::watch_interfaces_blocking().unwrap();
 
 loop {
-    let update = watch.updated();
+    let update = watch.changed();
     println!("Initial update: {}", update.is_initial);
     println!("Current interface map: {:#?}", update.interfaces);
 }
@@ -87,9 +87,7 @@ loop {
 
 #### Async watch
 
-This integrates with your async runtime. On macOS, Linux, and iOS it avoids creating a dedicated background thread for the watcher.
-
-You will probably want to enable a crate feature such as `tokio` or `async-io` in order to use the adapter appropriate for your async runtime.
+This integrates with your async runtime. You will probably want to enable a crate feature such as `tokio` or `async-io` in order to use the appropriate adapter.
 
 ```rust,no_run
 use netwatcher::async_adapter::Tokio;

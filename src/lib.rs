@@ -63,14 +63,14 @@
 //!
 //! ### Blocking watch example
 //!
-//! `updated()` waits forever if nothing changes, so it is intended for a thread or program
+//! `changed()` waits forever if nothing changes, so it is intended for a thread or program
 //! that has no other work to do until an interface change arrives.
 //!
 //! ```no_run
 //! let mut watch = netwatcher::watch_interfaces_blocking().unwrap();
 //!
 //! loop {
-//!     let update = watch.updated();
+//!     let update = watch.changed();
 //!     println!("Initial update: {}", update.is_initial);
 //!     println!("Current interface map: {:#?}", update.interfaces);
 //! }
@@ -336,8 +336,8 @@ impl BlockingWatch {
     /// This method is infallible. Once a watch has been created successfully, later failures to
     /// read platform notifications or re-list interfaces are swallowed and no update is emitted
     /// for that event.
-    pub fn updated(&mut self) -> Update {
-        self._inner.updated()
+    pub fn changed(&mut self) -> Update {
+        self._inner.changed()
     }
 }
 
@@ -371,7 +371,7 @@ pub fn watch_interfaces_with_callback<F: FnMut(Update) + Send + 'static>(
 
 /// Retrieve interface information and watch for changes synchronously.
 ///
-/// The first call to `updated()` returns the current interface snapshot immediately.
+/// The first call to `changed()` returns the current interface snapshot immediately.
 pub fn watch_interfaces_blocking() -> Result<BlockingWatch, Error> {
     watch::watch_interfaces_blocking().map(|handle| BlockingWatch { _inner: handle })
 }
