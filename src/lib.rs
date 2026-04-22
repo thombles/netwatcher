@@ -104,13 +104,6 @@ use std::{
     ops::Sub,
 };
 
-#[cfg(any(target_os = "linux", target_vendor = "apple"))]
-use std::{
-    future::Future,
-    os::fd::{BorrowedFd, OwnedFd},
-    pin::Pin,
-};
-
 mod error;
 
 #[cfg(any(windows, target_os = "android"))]
@@ -345,32 +338,6 @@ impl BlockingWatch {
     }
 }
 
-/// A runtime adapter that can register an existing nonblocking file descriptor for async waiting.
-///
-/// On Windows and Android, the adapter type is still required for API consistency, but the
-/// platform watcher uses callback-driven notifications and does not invoke the adapter.
-pub trait AsyncFdAdapter {
-    #[cfg(any(target_os = "linux", target_vendor = "apple"))]
-    fn register(fd: OwnedFd) -> std::io::Result<Box<dyn AsyncFdRegistration>>;
-}
-
-#[cfg(any(target_os = "linux", target_vendor = "apple"))]
-pub type AsyncFdReadableFuture<'a> =
-    Pin<Box<dyn Future<Output = std::io::Result<Box<dyn AsyncFdReadyGuard + 'a>>> + 'a>>;
-
-#[cfg(any(target_os = "linux", target_vendor = "apple"))]
-/// Registered readiness source for a watch file descriptor.
-pub trait AsyncFdRegistration: Send + Sync {
-    fn readable(&self) -> AsyncFdReadableFuture<'_>;
-}
-
-#[cfg(any(target_os = "linux", target_vendor = "apple"))]
-/// Guard returned once the runtime reports the watch file descriptor as readable.
-pub trait AsyncFdReadyGuard {
-    fn fd(&self) -> BorrowedFd<'_>;
-    fn clear_ready(&mut self);
-}
-
 /// Retrieve information about all enabled network interfaces and their IP addresses.
 ///
 /// This is a once-off operation. If you want to detect changes over time, see
@@ -409,6 +376,6 @@ pub fn watch_interfaces_blocking() -> Result<BlockingWatch, Error> {
 /// Retrieve interface information and watch for changes asynchronously using the given runtime adapter.
 ///
 /// The first call to `changed()` returns the current interface snapshot immediately.
-pub fn watch_interfaces_async<A: AsyncFdAdapter>() -> Result<AsyncWatch, Error> {
+pub fn watch_interfaces_async<A: async_adapter::AsyncFdAdapter>() -> Result<AsyncWatch, Error> {
     watch::watch_interfaces_async::<A>().map(|handle| AsyncWatch { _inner: handle })
 }

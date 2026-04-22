@@ -132,7 +132,8 @@ pub(crate) fn watch_interfaces_with_callback<F: FnMut(Update) + Send + 'static>(
 }
 
 #[allow(clippy::extra_unused_type_parameters)]
-pub(crate) fn watch_interfaces_async<A: crate::AsyncFdAdapter>() -> Result<AsyncWatch, Error> {
+pub(crate) fn watch_interfaces_async<A: crate::async_adapter::AsyncFdAdapter>(
+) -> Result<AsyncWatch, Error> {
     let (hnd, queue, state) = register_queued_watcher()?;
     Ok(AsyncWatch {
         hnd,

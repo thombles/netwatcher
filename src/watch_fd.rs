@@ -21,7 +21,7 @@ pub(crate) struct WatchHandle {
 }
 
 pub(crate) struct AsyncWatch {
-    registration: Box<dyn crate::AsyncFdRegistration>,
+    registration: Box<dyn crate::async_adapter::AsyncFdRegistration>,
     cursor: crate::UpdateCursor,
     initial_update: Option<Update>,
     drain_event_socket: DrainEventSocket,
@@ -46,7 +46,7 @@ impl AsyncWatch {
                 Err(_) => continue,
             };
 
-            (self.drain_event_socket)(ready.fd());
+            (self.drain_event_socket)(ready.fd().as_fd());
             ready.clear_ready();
 
             let Ok(new_list) = crate::list::list_interfaces() else {
@@ -96,11 +96,12 @@ pub(crate) fn watch_interfaces_with_callback<F: FnMut(Update) + Send + 'static>(
     })
 }
 
-pub(crate) fn watch_interfaces_async<A: crate::AsyncFdAdapter>(
+pub(crate) fn watch_interfaces_async<A: crate::async_adapter::AsyncFdAdapter>(
     ops: EventSocketOps,
 ) -> Result<AsyncWatch, Error> {
     let socket = (ops.open)()?;
-    let registration = A::register(socket).map_err(crate::Error::Io)?;
+    let registration = A::register(crate::async_adapter::AsyncFd::from_owned_fd(socket))
+        .map_err(crate::Error::Io)?;
     let current_list = crate::list::list_interfaces()?;
     let mut cursor = crate::UpdateCursor::default();
     let initial_update = cursor.advance(current_list);

@@ -18,7 +18,8 @@ pub(crate) fn watch_interfaces_with_callback<F: FnMut(Update) + Send + 'static>(
     crate::watch_fd::watch_interfaces_with_callback(callback, EVENT_SOCKET_OPS)
 }
 
-pub(crate) fn watch_interfaces_async<A: crate::AsyncFdAdapter>() -> Result<AsyncWatch, Error> {
+pub(crate) fn watch_interfaces_async<A: crate::async_adapter::AsyncFdAdapter>(
+) -> Result<AsyncWatch, Error> {
     crate::watch_fd::watch_interfaces_async::<A>(EVENT_SOCKET_OPS)
 }
 
