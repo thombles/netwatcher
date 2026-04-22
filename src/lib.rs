@@ -78,6 +78,9 @@
 //!
 //! ### Async watch example
 //!
+//! You will probably want to enable a crate feature such as `tokio` or `async-io` in order
+//! to use the adapter appropriate for your async runtime.
+//!
 //! ```no_run
 //! # #[cfg(all(target_os = "linux", feature = "tokio"))]
 //! # {

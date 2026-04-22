@@ -89,6 +89,8 @@ loop {
 
 This integrates with your async runtime. On macOS, Linux, and iOS it avoids creating a dedicated background thread for the watcher.
 
+You will probably want to enable a crate feature such as `tokio` or `async-io` in order to use the adapter appropriate for your async runtime.
+
 ```rust,no_run
 use netwatcher::async_adapter::Tokio;
 
