@@ -7,7 +7,10 @@
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
-use std::sync::mpsc::{self, Receiver};
+use std::sync::{
+    mpsc::{self, Receiver},
+    Arc, Mutex,
+};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -159,17 +162,33 @@ fn spawn_logcat_watcher() -> (Receiver<Event>, Child) {
         .spawn()
         .expect("failed to start adb logcat");
     let stdout = child.stdout.take().expect("no stdout");
+    let stderr = child.stderr.take().expect("no stderr");
 
     let (tx, rx) = mpsc::channel();
+    let stdout_lock = Arc::new(Mutex::new(()));
+    let stdout_lock_for_stderr = stdout_lock.clone();
 
     thread::spawn(move || {
         let reader = BufReader::new(stdout);
         for line in reader.lines().map_while(Result::ok) {
+            {
+                let _guard = stdout_lock.lock().unwrap();
+                println!("[adb logcat] {line}");
+            }
             if let Some(ev) = parse_log_line(&line) {
                 let _ = tx.send(ev);
             }
         }
     });
+
+    thread::spawn(move || {
+        let reader = BufReader::new(stderr);
+        for line in reader.lines().map_while(Result::ok) {
+            let _guard = stdout_lock_for_stderr.lock().unwrap();
+            eprintln!("[adb logcat stderr] {line}");
+        }
+    });
+
     (rx, child)
 }
 

@@ -41,6 +41,8 @@ jobs:
 
     - name: Run integration tests via test app
       uses: reactivecircus/android-emulator-runner@v2
+      env:
+        RUST_BACKTRACE: 1
       with:
         api-level: 35
         target: default
