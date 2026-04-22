@@ -23,10 +23,16 @@ fn init_android_logging() {
 
 // Helper for CI testing that logs IPs in a particular format
 fn log_ips(prefix: &str, interfaces: &HashMap<u32, Interface>) {
-    let ips: Vec<String> = interfaces
+    let mut ips: Vec<String> = interfaces
         .values()
-        .flat_map(|iface| iface.ips.iter().map(|record| record.ip.to_string()))
+        .flat_map(|iface| {
+            iface
+                .ips
+                .iter()
+                .map(|record| format!("{}:{}", iface.name, record.ip))
+        })
         .collect();
+    ips.sort();
     let joined = ips.join(",");
     log::info!("{prefix}:{joined}");
 }

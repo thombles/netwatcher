@@ -7,7 +7,7 @@ use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EventKind {
@@ -18,16 +18,19 @@ enum EventKind {
 #[derive(Debug)]
 struct Event {
     kind: EventKind,
-    has_dot1: bool,
-    has_dot10: bool,
+    body: String,
 }
 
 #[test]
 #[ignore]
 fn android_list_and_watch_interfaces() {
-    let _ = Command::new("adb").args(["root"]).status();
+    wait_for_adb_device(60, "connect to emulator");
+    wait_for_wifi_service(120, "wait for Wi-Fi service before launch");
+    set_wifi_enabled(false);
+    wait_for_wifi_enabled(false, 30, "disable Wi-Fi before launch");
 
     // build and install the app
+    wait_for_adb_device(60, "device before installDebug");
     let status = Command::new("sh")
         .current_dir("android")
         .args(["gradlew", "installDebug"])
@@ -52,42 +55,41 @@ fn android_list_and_watch_interfaces() {
         .expect("failed to start activity");
     assert!(status.success(), "activity start failed");
 
-    // Expect LIST_IPS with 127.0.0.1
-    expect_event(&rx, EventKind::List, true, false, 60, "LIST_IPS initial");
-    // Expect initial WATCH_IPS with 127.0.0.1 only
-    expect_event(&rx, EventKind::Watch, true, false, 60, "WATCH_IPS initial");
-
-    // Add IP 127.0.0.10
-    let status = Command::new("adb")
-        .args(["shell", "ip", "addr", "add", "127.0.0.10/8", "dev", "lo"])
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status()
-        .expect("failed to run 'adb shell ip addr add 127.0.0.10/8 dev lo'");
-    assert!(
-        status.success(),
-        "adb add loopback alias failed: status={status:?}"
-    );
-    expect_event(&rx, EventKind::Watch, true, true, 60, "WATCH_IPS after add");
-
-    // Remove IP
-    let status = Command::new("adb")
-        .args(["shell", "ip", "addr", "del", "127.0.0.10/8", "dev", "lo"])
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status()
-        .expect("failed to run 'adb shell ip addr del 127.0.0.10/8 dev lo'");
-    assert!(
-        status.success(),
-        "adb delete loopback alias failed: status={status:?}"
+    expect_event(
+        &rx,
+        EventKind::List,
+        60,
+        "LIST_IPS initial without wlan0",
+        |body| !body.contains("wlan0:"),
     );
     expect_event(
         &rx,
         EventKind::Watch,
-        true,
-        false,
         60,
-        "WATCH_IPS after del",
+        "WATCH_IPS initial without wlan0",
+        |body| !body.contains("wlan0:"),
+    );
+
+    set_wifi_enabled(true);
+    wait_for_wifi_enabled(true, 30, "enable Wi-Fi after launch");
+
+    expect_event(
+        &rx,
+        EventKind::Watch,
+        60,
+        "WATCH_IPS after enabling Wi-Fi",
+        |body| body.contains("wlan0:"),
+    );
+
+    set_wifi_enabled(false);
+    wait_for_wifi_enabled(false, 30, "disable Wi-Fi after enabling");
+
+    expect_event(
+        &rx,
+        EventKind::Watch,
+        60,
+        "WATCH_IPS after disabling Wi-Fi",
+        |body| !body.contains("wlan0:"),
     );
 }
 
@@ -116,50 +118,144 @@ fn spawn_logcat_watcher() -> (Receiver<Event>, Child) {
 fn parse_log_line(line: &str) -> Option<Event> {
     let trimmed = line.trim();
     if let Some(idx) = trimmed.find("LIST_IPS:") {
-        let list = &trimmed[idx + "LIST_IPS:".len()..];
-        let ips: Vec<&str> = list
-            .split(',')
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .collect();
-        let has_dot1 = ips.contains(&"127.0.0.1");
-        let has_dot10 = ips.contains(&"127.0.0.10");
         return Some(Event {
             kind: EventKind::List,
-            has_dot1,
-            has_dot10,
+            body: trimmed[idx + "LIST_IPS:".len()..].trim().to_string(),
         });
     }
     if let Some(idx) = trimmed.find("WATCH_IPS:") {
-        let list = &trimmed[idx + "WATCH_IPS:".len()..];
-        let ips: Vec<&str> = list
-            .split(',')
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .collect();
-        let has_dot1 = ips.contains(&"127.0.0.1");
-        let has_dot10 = ips.contains(&"127.0.0.10");
         return Some(Event {
             kind: EventKind::Watch,
-            has_dot1,
-            has_dot10,
+            body: trimmed[idx + "WATCH_IPS:".len()..].trim().to_string(),
         });
     }
     None
 }
 
+fn set_wifi_enabled(enabled: bool) {
+    let arg = if enabled { "enabled" } else { "disabled" };
+    let status = Command::new("adb")
+        .args(["shell", "cmd", "wifi", "set-wifi-enabled", arg])
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()
+        .expect("failed to run 'adb shell cmd wifi set-wifi-enabled'");
+    assert!(
+        status.success(),
+        "failed to set Wi-Fi {arg}: status={status:?}"
+    );
+}
+
+fn wait_for_adb_device(timeout_secs: u64, ctx: &str) {
+    let deadline = Instant::now() + Duration::from_secs(timeout_secs);
+
+    loop {
+        let output = Command::new("adb")
+            .args(["get-state"])
+            .output()
+            .expect("failed to run 'adb get-state'");
+        if output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "device" {
+            return;
+        }
+        if Instant::now() >= deadline {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            panic!("timeout waiting for adb device to {ctx}: stdout={stdout:?} stderr={stderr:?}");
+        }
+        thread::sleep(Duration::from_millis(500));
+    }
+}
+
+fn wait_for_wifi_service(timeout_secs: u64, ctx: &str) {
+    let deadline = Instant::now() + Duration::from_secs(timeout_secs);
+
+    loop {
+        let service_output = Command::new("adb")
+            .args(["shell", "service", "check", "wifi"])
+            .output()
+            .expect("failed to run 'adb shell service check wifi'");
+        let service_stdout = String::from_utf8_lossy(&service_output.stdout);
+
+        let dumpsys_output = Command::new("adb")
+            .args(["shell", "dumpsys", "wifi"])
+            .output()
+            .expect("failed to run 'adb shell dumpsys wifi'");
+        let dumpsys_stdout = String::from_utf8_lossy(&dumpsys_output.stdout);
+
+        if service_output.status.success()
+            && service_stdout.contains("Service wifi: found")
+            && dumpsys_output.status.success()
+            && !dumpsys_stdout.contains("Can't find service: wifi")
+        {
+            return;
+        }
+
+        if Instant::now() >= deadline {
+            let service_stderr = String::from_utf8_lossy(&service_output.stderr);
+            let dumpsys_stderr = String::from_utf8_lossy(&dumpsys_output.stderr);
+            panic!(
+                "timeout waiting to {ctx}: service_stdout={service_stdout:?} service_stderr={service_stderr:?} dumpsys_stdout={dumpsys_stdout:?} dumpsys_stderr={dumpsys_stderr:?}"
+            );
+        }
+
+        thread::sleep(Duration::from_millis(500));
+    }
+}
+
+fn wait_for_wifi_enabled(enabled: bool, timeout_secs: u64, ctx: &str) {
+    let expected = if enabled {
+        "Wifi is enabled"
+    } else {
+        "Wifi is disabled"
+    };
+    let deadline = Instant::now() + Duration::from_secs(timeout_secs);
+
+    loop {
+        let output = Command::new("adb")
+            .args(["shell", "cmd", "wifi", "status"])
+            .output()
+            .expect("failed to run 'adb shell cmd wifi status'");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if stdout.contains(expected) {
+            return;
+        }
+        if Instant::now() >= deadline {
+            panic!("timeout waiting to {ctx}: got {stdout:?}");
+        }
+        thread::sleep(Duration::from_millis(500));
+    }
+}
+
 fn expect_event(
     rx: &Receiver<Event>,
     kind: EventKind,
-    dot1: bool,
-    dot10: bool,
     timeout_secs: u64,
     ctx: &str,
+    predicate: impl Fn(&str) -> bool,
 ) {
-    let ev = rx
-        .recv_timeout(Duration::from_secs(timeout_secs))
-        .unwrap_or_else(|_| panic!("timeout waiting for {ctx} {kind:?}"));
-    assert_eq!(ev.kind, kind, "{ctx} kind mismatch: got {:?}", ev.kind);
-    assert_eq!(ev.has_dot1, dot1, "{ctx} dot1");
-    assert_eq!(ev.has_dot10, dot10, "{ctx} dot10");
+    let deadline = Instant::now() + Duration::from_secs(timeout_secs);
+    let mut last_body = None;
+
+    loop {
+        let now = Instant::now();
+        if now >= deadline {
+            match last_body {
+                Some(body) => {
+                    panic!("timeout waiting for {ctx} {kind:?}; last matching body: {body}")
+                }
+                None => panic!("timeout waiting for {ctx} {kind:?}"),
+            }
+        }
+
+        let ev = rx
+            .recv_timeout(deadline.saturating_duration_since(now))
+            .unwrap_or_else(|_| panic!("timeout waiting for {ctx} {kind:?}"));
+        if ev.kind != kind {
+            continue;
+        }
+        if predicate(&ev.body) {
+            return;
+        }
+        last_body = Some(ev.body);
+    }
 }
