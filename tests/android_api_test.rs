@@ -156,16 +156,16 @@ fn parse_log_line(line: &str) -> Option<Event> {
             body: trimmed[idx + "LIST_IPS:".len()..].trim().to_string(),
         });
     }
-    if let Some(idx) = trimmed.find("WATCH_IPS:") {
-        return Some(Event {
-            kind: EventKind::Watch,
-            body: trimmed[idx + "WATCH_IPS:".len()..].trim().to_string(),
-        });
-    }
     if let Some(idx) = trimmed.find("ASYNC_WATCH_IPS:") {
         return Some(Event {
             kind: EventKind::AsyncWatch,
             body: trimmed[idx + "ASYNC_WATCH_IPS:".len()..].trim().to_string(),
+        });
+    }
+    if let Some(idx) = trimmed.find("WATCH_IPS:") {
+        return Some(Event {
+            kind: EventKind::Watch,
+            body: trimmed[idx + "WATCH_IPS:".len()..].trim().to_string(),
         });
     }
     None
