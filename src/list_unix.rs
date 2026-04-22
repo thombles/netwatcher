@@ -1,13 +1,17 @@
 use std::fmt::Write;
 use std::{collections::HashMap, net::IpAddr};
 
-use nix::{ifaddrs::getifaddrs, net::if_::if_nametoindex};
+use nix::{
+    ifaddrs::getifaddrs,
+    net::if_::{if_nametoindex, InterfaceFlags},
+};
 
 use crate::{Error, Interface, IpRecord, List};
 
 struct CandidateInterface {
     name: String,
     index: u32,
+    flags: InterfaceFlags,
     hw_addr: Option<String>,
     ips: Vec<CandidateIpRecord>,
 }
@@ -29,9 +33,11 @@ pub(crate) fn list_interfaces() -> Result<List, Error> {
             .or_insert_with(|| CandidateInterface {
                 name: addr.interface_name.clone(),
                 index,
+                flags: addr.flags,
                 hw_addr: None,
                 ips: vec![],
             });
+        candidate.flags |= addr.flags;
         if let Some(a) = addr.address {
             if let Some(a) = a.as_link_addr() {
                 if let Some(raw_addr) = a.addr() {
@@ -65,6 +71,7 @@ pub(crate) fn list_interfaces() -> Result<List, Error> {
 
     let ifs = candidates
         .drain()
+        .filter(|(_, c)| c.flags.contains(InterfaceFlags::IFF_UP))
         .map(|(_, mut c)| {
             // alias IPs on Mac do not get their own prefix len
             if let Some(prefix_in_use) = c
