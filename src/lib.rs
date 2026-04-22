@@ -9,7 +9,7 @@
 //! ## List example
 //!
 //! ```
-//! /// Returns a HashMap from ifindex (a `u32`) to an `Interface` struct
+//! // Returns a HashMap from ifindex (a `u32`) to an `Interface` struct.
 //! let interfaces = netwatcher::list_interfaces().unwrap();
 //! for i in interfaces.values() {
 //!     println!("interface {}", i.name);
@@ -19,32 +19,64 @@
 //! }
 //! ```
 //!
-//! ## Watch example
+//! ## Watch options
 //!
-//! ```
+//! - `watch_interfaces_with_callback`: simplest callback-based API. On Linux and Apple
+//!   platforms this creates a background thread.
+//! - `watch_interfaces_blocking`: waits in the current thread until there is an interface
+//!   change.
+//! - `watch_interfaces_async::<T>`: allows you to `.await` interface changes by integrating
+//     with an async runtime adapter such as `Tokio` or `AsyncIo`.
+//!
+//! ### Callback watch example
+//!
+//! ```no_run
 //! let handle = netwatcher::watch_interfaces_with_callback(|update| {
-//!     // This callback will fire once immediately with the existing state
-//!     assert_eq!(update.is_initial, update.diff.removed.is_empty());
-//!
-//!     // Update includes the latest snapshot of all interfaces
+//!     println!("Initial update: {}", update.is_initial);
 //!     println!("Current interface map: {:#?}", update.interfaces);
 //!
-//!     // The `UpdateDiff` describes changes since previous callback
-//!     // You can choose whether to use the snapshot, diff, or both
-//!     println!("ifindexes added: {:?}", update.diff.added);
-//!     println!("ifindexes removed: {:?}", update.diff.removed);
-//!     for (ifindex, if_diff) in update.diff.modified {
-//!         println!("Interface index {} has changed", ifindex);
-//!         println!("Added IPs: {:?}", if_diff.addrs_added);
-//!         println!("Removed IPs: {:?}", if_diff.addrs_removed);
+//!     // Interfaces may appear or disappear entirely.
+//!     for ifindex in &update.diff.added {
+//!         println!("ifindex {} was added", ifindex);
 //!     }
-//! }).unwrap();
-//! // keep `handle` alive as long as you want callbacks
+//!     for ifindex in &update.diff.removed {
+//!         println!("ifindex {} was removed", ifindex);
+//!     }
+//!
+//!     // Existing interfaces may gain or lose IPs.
+//!     for (ifindex, diff) in &update.diff.modified {
+//!         let interface = &update.interfaces[ifindex];
+//!         for addr in &diff.addrs_added {
+//!             println!("{} gained {}/{}", interface.name, addr.ip, addr.prefix_len);
+//!         }
+//!         for addr in &diff.addrs_removed {
+//!             println!("{} lost {}/{}", interface.name, addr.ip, addr.prefix_len);
+//!         }
+//!     }
+//! })
+//! .unwrap();
+//!
+//! // Keep `handle` alive as long as you want callbacks.
 //! // ...
 //! drop(handle);
 //! ```
 //!
-//! ## Async watch example
+//! ### Blocking watch example
+//!
+//! `updated()` waits forever if nothing changes, so it is intended for a thread or program
+//! that has no other work to do until an interface change arrives.
+//!
+//! ```no_run
+//! let mut watch = netwatcher::watch_interfaces_blocking().unwrap();
+//!
+//! loop {
+//!     let update = watch.updated();
+//!     println!("Initial update: {}", update.is_initial);
+//!     println!("Current interface map: {:#?}", update.interfaces);
+//! }
+//! ```
+//!
+//! ### Async watch example
 //!
 //! ```no_run
 //! # #[cfg(all(target_os = "linux", feature = "tokio"))]
@@ -59,6 +91,7 @@
 //!     let mut watch = netwatcher::watch_interfaces_async::<Tokio>().unwrap();
 //!     loop {
 //!         let update = watch.changed().await;
+//!         println!("Initial update: {}", update.is_initial);
 //!         println!("Current interface map: {:#?}", update.interfaces);
 //!     }
 //! });

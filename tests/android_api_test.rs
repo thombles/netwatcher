@@ -27,7 +27,7 @@ struct Event {
 
 #[test]
 #[ignore]
-fn android_list_and_watch_interfaces() {
+fn android_list_and_watch_apis() {
     wait_for_adb_device(60, "connect to emulator");
     wait_for_wifi_service(120, "wait for Wi-Fi service before launch");
     set_wifi_enabled(false);

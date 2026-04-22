@@ -10,9 +10,9 @@
 | Platform | Min Version | List | Watch | Notes                                                                                 |
 |----------|-------------|------|-------|---------------------------------------------------------------------------------------|
 | Windows  | -           | ✅    | ✅     |                                                                                       |
-| Mac      | -           | ✅    | ✅     | Sync watch creates background thread                                                       |
-| Linux    | -           | ✅    | ✅     | Sync watch creates background thread                                                       |
-| iOS      | -           | ✅    | ✅     | Sync watch creates background thread                                                       |
+| Mac      | -           | ✅    | ✅     | Callback watch creates background thread                                                       |
+| Linux    | -           | ✅    | ✅     | Callback watch creates background thread                                                       |
+| iOS      | -           | ✅    | ✅     | Callback watch creates background thread                                                       |
 | Android  | 5.0         | ✅    | ✅     | Watch requires extra setup. See Android Setup instructions below.             |
 
 ## Usage
@@ -20,7 +20,7 @@
 ### Listing interfaces
 
 ```rust
-// Returns a HashMap from ifindex (a `u32`) to an `Interface` struct
+// Returns a HashMap from ifindex (a `u32`) to an `Interface` struct.
 let interfaces = netwatcher::list_interfaces().unwrap();
 for i in interfaces.values() {
     println!("interface {} has {} IPs", i.name, i.ips.len());
@@ -29,34 +29,67 @@ for i in interfaces.values() {
 
 ### Watching for changes to interfaces
 
+Choose one of the three watch APIs:
+
+- `watch_interfaces_with_callback`: easiest when you want interface changes pushed into a callback. On macOS, Linux, and iOS this creates a background thread.
+- `watch_interfaces_blocking`: waits in the current thread until there is a change. If nothing changes, `updated()` never returns, so this is best for a dedicated thread or a program with no other work to do until interfaces change.
+- `watch_interfaces_async::<T>`: allows you to `.await` interface changes by integrating with an async runtime adapter such as `Tokio` or `AsyncIo`.
+
+#### Callback watch
+
+This is the simplest option when you want change notifications delivered to a callback.
+
 ```rust
 let handle = netwatcher::watch_interfaces_with_callback(|update| {
-    // This callback will fire once immediately with the existing state
-    println!("Initial update: {}", update.is_initial);
-
-    // Update includes the latest snapshot of all interfaces
+    // All watch types will fire immediately with initial interface state
+    println!("Is initial update: {}", update.is_initial);
     println!("Current interface map: {:#?}", update.interfaces);
 
-    // The `UpdateDiff` describes changes since previous callback
-    // You can choose whether to use the snapshot, diff, or both
-    println!("ifindexes added: {:?}", update.diff.added);
-    println!("ifindexes removed: {:?}", update.diff.removed);
-    for (ifindex, if_diff) in update.diff.modified {
-        println!("Interface index {} has changed", ifindex);
-        println!("Added IPs: {:?}", if_diff.addrs_added);
-        println!("Removed IPs: {:?}", if_diff.addrs_removed);
+    // Interfaces may appear or disappear entirely.
+    for ifindex in &update.diff.added {
+        println!("ifindex {} was added", ifindex);
     }
-}).unwrap();
-// keep `handle` alive as long as you want callbacks
+    for ifindex in &update.diff.removed {
+        println!("ifindex {} was removed", ifindex);
+    }
+
+    // Existing interfaces may gain or lose IPs.
+    for (ifindex, diff) in &update.diff.modified {
+        let interface = &update.interfaces[ifindex];
+        for addr in &diff.addrs_added {
+            println!("{} gained {}/{}", interface.name, addr.ip, addr.prefix_len);
+        }
+        for addr in &diff.addrs_removed {
+            println!("{} lost {}/{}", interface.name, addr.ip, addr.prefix_len);
+        }
+    }
+})
+.unwrap();
+
+// Keep `handle` alive as long as you want callbacks.
 // ...
 drop(handle);
 ```
 
-### Async watch
+#### Blocking watch
 
-There is also an async watch API. This can be more efficient as it will avoid creating dedicated background threads for watchers. Call `watch_interfaces_async::<T>()` with a suitable runtime adapter, e.g. `Tokio` or `AsyncIo`. These are provided by the `tokio` and `async-io` features, or you can implement your own.
+This waits in the current thread until an update is available.
 
-```rust
+```rust,no_run
+let mut watch = netwatcher::watch_interfaces_blocking().unwrap();
+
+loop {
+    let update = watch.updated();
+    println!("Initial update: {}", update.is_initial);
+    println!("Current interface map: {:#?}", update.interfaces);
+}
+```
+
+#### Async watch
+
+This integrates with your async runtime. On macOS, Linux, and iOS it avoids creating a dedicated background thread for the watcher.
+
+```rust,no_run
 use netwatcher::async_adapter::Tokio;
 
 let runtime = tokio::runtime::Builder::new_current_thread()
@@ -67,9 +100,9 @@ let runtime = tokio::runtime::Builder::new_current_thread()
 runtime.block_on(async {
     let mut watch = netwatcher::watch_interfaces_async::<Tokio>().unwrap();
 
-    // changed() will fire once immediately with the existing state
     loop {
         let update = watch.changed().await;
+        println!("Initial update: {}", update.is_initial);
         println!("Current interface map: {:#?}", update.interfaces);
     }
 });

@@ -94,7 +94,7 @@ fn test_list_interfaces_has_loopback() {
 #[ignore] // needs to run in administrator/root context
 #[cfg(any(target_os = "windows", target_os = "linux", target_vendor = "apple"))]
 #[serial(loopback)]
-fn test_watch_interfaces_loopback_changes() {
+fn test_watch_interfaces_callback_loopback_changes() {
     use helpers::sys::*;
 
     let loopback_interface = discover_loopback_interface();
