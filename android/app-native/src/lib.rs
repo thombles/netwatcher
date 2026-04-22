@@ -62,9 +62,11 @@ fn log_ips(prefix: &str, interfaces: &HashMap<u32, Interface>) {
     log::info!("{prefix}:{joined}");
 }
 
-/// # Safety
-/// This function is called from Java/JNI and must be marked unsafe because it:
-/// - Accepts raw pointers from the JNI interface (context jobject)
+/// JNI entrypoint invoked from Java to provide the Android `Context` to Rust.
+///
+/// The exported function itself is safe to call from JNI because it receives
+/// typed wrapper values. The raw-pointer unsafety is contained inside
+/// `netwatcher::set_android_context`.
 #[no_mangle]
 pub extern "system" fn Java_net_octet_1stream_netwatcher_netwatchertestapp_MainActivity_setAndroidContext(
     env: EnvUnowned<'_>,
@@ -88,9 +90,8 @@ pub extern "system" fn Java_net_octet_1stream_netwatcher_netwatchertestapp_MainA
     }
 }
 
-/// # Safety
-/// This function is called from Java/JNI and must be marked unsafe because it:
-/// - Accepts raw pointers from the JNI interface (callback jobject)
+/// JNI entrypoint invoked from Java to register the GUI callback and start
+/// both sync and async interface watchers.
 #[no_mangle]
 pub extern "system" fn Java_net_octet_1stream_netwatcher_netwatchertestapp_MainActivity_startWatching(
     mut env: EnvUnowned<'_>,

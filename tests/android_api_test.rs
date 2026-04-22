@@ -1,4 +1,5 @@
-//! Android integration test for list_interfaces and watch_interfaces via the test app.
+//! Android integration test for list_interfaces, watch_interfaces, and
+//! watch_interfaces_async via the test app.
 //! Ignored by default: requires Linux host with Android SDK + emulator + adb in PATH.
 
 #![cfg(target_os = "linux")]
