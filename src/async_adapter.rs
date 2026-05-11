@@ -70,9 +70,8 @@ pub trait AsyncFdAdapter {
     fn register(fd: AsyncFd) -> std::io::Result<Box<dyn AsyncFdRegistration>>;
 }
 
-pub type AsyncFdReadableFuture<'a> = Pin<
-    Box<dyn Future<Output = std::io::Result<Box<dyn AsyncFdReadyGuard + Send + 'a>>> + Send + 'a>,
->;
+pub type AsyncFdReadableFuture<'a> =
+    Pin<Box<dyn Future<Output = std::io::Result<Box<dyn AsyncFdReadyGuard + 'a>>> + Send + 'a>>;
 
 /// Registered readiness source for a watch file descriptor.
 pub trait AsyncFdRegistration: Send + Sync {
@@ -80,7 +79,7 @@ pub trait AsyncFdRegistration: Send + Sync {
 }
 
 /// Guard returned once the runtime reports the watch file descriptor as readable.
-pub trait AsyncFdReadyGuard {
+pub trait AsyncFdReadyGuard: Send {
     fn fd(&self) -> AsyncFdRef<'_>;
     fn clear_ready(&mut self);
 }
@@ -103,7 +102,7 @@ impl AsyncFdRegistration for tokio::io::unix::AsyncFd<OwnedFd> {
     fn readable(&self) -> AsyncFdReadableFuture<'_> {
         Box::pin(async move {
             let guard = self.readable().await?;
-            Ok(Box::new(guard) as Box<dyn AsyncFdReadyGuard + Send>)
+            Ok(Box::new(guard) as Box<dyn AsyncFdReadyGuard>)
         })
     }
 }
@@ -158,7 +157,7 @@ impl AsyncFdRegistration for AsyncIoRegistration {
     fn readable(&self) -> AsyncFdReadableFuture<'_> {
         Box::pin(async move {
             self.0.readable().await?;
-            Ok(Box::new(AsyncIoReadyGuard(&self.0)) as Box<dyn AsyncFdReadyGuard + Send>)
+            Ok(Box::new(AsyncIoReadyGuard(&self.0)) as Box<dyn AsyncFdReadyGuard>)
         })
     }
 }
