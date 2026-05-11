@@ -22,6 +22,19 @@ use crate::Error;
 use crate::List;
 use crate::Update;
 
+struct NotificationHandle(HANDLE);
+
+// SAFETY: The cancellation is intended to be used from another thread.
+unsafe impl Send for NotificationHandle {}
+
+impl NotificationHandle {
+    fn cancel(&self) {
+        unsafe {
+            let _ = CancelMibChangeNotify2(self.0);
+        }
+    }
+}
+
 struct WatchState {
     cursor: crate::UpdateCursor,
     /// User's callback
@@ -29,7 +42,7 @@ struct WatchState {
 }
 
 pub(crate) struct WatchHandle {
-    hnd: HANDLE,
+    hnd: NotificationHandle,
     _state: Pin<Box<Mutex<WatchState>>>,
 }
 
@@ -39,20 +52,20 @@ struct QueuedWatchState {
 }
 
 type QueuedWatchRegistration = (
-    HANDLE,
+    NotificationHandle,
     SharedAsyncCallbackQueue,
     Pin<Box<Mutex<QueuedWatchState>>>,
 );
 
 pub(crate) struct AsyncWatch {
-    hnd: HANDLE,
+    hnd: NotificationHandle,
     queue: SharedAsyncCallbackQueue,
     cursor: crate::UpdateCursor,
     _state: Pin<Box<Mutex<QueuedWatchState>>>,
 }
 
 pub(crate) struct BlockingWatch {
-    hnd: HANDLE,
+    hnd: NotificationHandle,
     queue: SharedAsyncCallbackQueue,
     cursor: crate::UpdateCursor,
     _state: Pin<Box<Mutex<QueuedWatchState>>>,
@@ -60,9 +73,7 @@ pub(crate) struct BlockingWatch {
 
 impl Drop for AsyncWatch {
     fn drop(&mut self) {
-        unsafe {
-            let _ = CancelMibChangeNotify2(self.hnd);
-        }
+        self.hnd.cancel();
     }
 }
 
@@ -79,9 +90,7 @@ impl AsyncWatch {
 
 impl Drop for BlockingWatch {
     fn drop(&mut self) {
-        unsafe {
-            let _ = CancelMibChangeNotify2(self.hnd);
-        }
+        self.hnd.cancel();
     }
 }
 
@@ -98,9 +107,7 @@ impl BlockingWatch {
 
 impl Drop for WatchHandle {
     fn drop(&mut self) {
-        unsafe {
-            let _ = CancelMibChangeNotify2(self.hnd);
-        }
+        self.hnd.cancel();
     }
 }
 
@@ -122,7 +129,10 @@ pub(crate) fn watch_interfaces_with_callback<F: FnMut(Update) + Send + 'static>(
             // Trigger an initial update
             handle_notif(&mut state.lock().unwrap(), crate::list::list_interfaces()?);
             // Then return the handle
-            Ok(WatchHandle { hnd, _state: state })
+            Ok(WatchHandle {
+                hnd: NotificationHandle(hnd),
+                _state: state,
+            })
         }
         ERROR_INVALID_HANDLE => Err(Error::InvalidHandle),
         ERROR_INVALID_PARAMETER => Err(Error::InvalidParameter),
@@ -174,7 +184,7 @@ fn register_queued_watcher() -> Result<QueuedWatchRegistration, Error> {
         )
     };
     match res {
-        NO_ERROR => Ok((hnd, queue, state)),
+        NO_ERROR => Ok((NotificationHandle(hnd), queue, state)),
         ERROR_INVALID_HANDLE => Err(Error::InvalidHandle),
         ERROR_INVALID_PARAMETER => Err(Error::InvalidParameter),
         ERROR_NOT_ENOUGH_MEMORY => Err(Error::NotEnoughMemory),

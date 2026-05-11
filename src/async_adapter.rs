@@ -71,7 +71,7 @@ pub trait AsyncFdAdapter {
 }
 
 pub type AsyncFdReadableFuture<'a> =
-    Pin<Box<dyn Future<Output = std::io::Result<Box<dyn AsyncFdReadyGuard + 'a>>> + 'a>>;
+    Pin<Box<dyn Future<Output = std::io::Result<Box<dyn AsyncFdReadyGuard + 'a>>> + Send + 'a>>;
 
 /// Registered readiness source for a watch file descriptor.
 pub trait AsyncFdRegistration: Send + Sync {
@@ -79,7 +79,7 @@ pub trait AsyncFdRegistration: Send + Sync {
 }
 
 /// Guard returned once the runtime reports the watch file descriptor as readable.
-pub trait AsyncFdReadyGuard {
+pub trait AsyncFdReadyGuard: Send {
     fn fd(&self) -> AsyncFdRef<'_>;
     fn clear_ready(&mut self);
 }

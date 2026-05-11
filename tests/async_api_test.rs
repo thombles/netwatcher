@@ -90,6 +90,27 @@ fn test_watch_interfaces_async_tokio_loopback_changes() {
 }
 
 #[test]
+#[cfg(all(
+    any(target_os = "windows", target_os = "linux", target_vendor = "apple"),
+    feature = "tokio"
+))]
+fn test_watch_interfaces_async_tokio_spawned_task() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("failed to build tokio runtime");
+    runtime.block_on(async {
+        let mut watch = netwatcher::watch_interfaces_async::<netwatcher::async_adapter::Tokio>()
+            .expect("failed to create async watcher");
+
+        let task = tokio::spawn(async move { watch.changed().await });
+        let initial = task.await.expect("spawned watch task failed");
+
+        assert!(initial.is_initial);
+    });
+}
+
+#[test]
 #[ignore]
 #[cfg(all(
     any(target_os = "windows", target_os = "linux", target_vendor = "apple"),
