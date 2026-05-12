@@ -40,6 +40,23 @@ impl Drop for AsyncWatcher {
     }
 }
 
+/// Compile-time check that `AsyncWatch::changed()` returns a `Send` future on Android.
+pub fn compile_check_changed_future_is_send_for_tokio_spawned_task() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("failed to build tokio runtime");
+    runtime.block_on(async {
+        let mut watch = netwatcher::watch_interfaces_async::<netwatcher::async_adapter::Tokio>()
+            .expect("failed to create async watcher");
+
+        let task = tokio::spawn(async move { watch.changed().await });
+        let initial = task.await.expect("spawned watch task failed");
+
+        assert!(initial.is_initial);
+    });
+}
+
 fn init_android_logging() {
     android_logger::init_once(
         android_logger::Config::default().with_max_level(log::LevelFilter::Debug),
