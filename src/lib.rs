@@ -112,7 +112,7 @@ mod error;
 #[cfg(any(windows, target_os = "android"))]
 mod async_callback;
 
-#[cfg(any(target_os = "linux", target_vendor = "apple"))]
+#[cfg(all(unix, not(target_os = "android")))]
 mod watch_fd;
 
 #[cfg_attr(windows, path = "list_win.rs")]
@@ -123,8 +123,11 @@ mod list;
 mod android;
 
 #[cfg_attr(windows, path = "watch_win.rs")]
-#[cfg_attr(target_vendor = "apple", path = "watch_mac.rs")]
 #[cfg_attr(target_os = "linux", path = "watch_linux.rs")]
+#[cfg_attr(
+    all(unix, not(target_os = "linux"), not(target_os = "android")),
+    path = "watch_route.rs"
+)]
 #[cfg_attr(target_os = "android", path = "watch_android.rs")]
 mod watch;
 

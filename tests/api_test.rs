@@ -1,19 +1,19 @@
 use netwatcher::{list_interfaces, IpRecord};
-#[cfg(any(target_os = "windows", target_os = "linux", target_vendor = "apple"))]
+#[cfg(any(windows, all(unix, not(target_os = "android"))))]
 use serial_test::serial;
 use std::net::{IpAddr, Ipv4Addr};
 
-#[cfg(any(target_os = "windows", target_os = "linux", target_vendor = "apple"))]
+#[cfg(any(windows, all(unix, not(target_os = "android"))))]
 use netwatcher::{watch_interfaces_blocking, watch_interfaces_with_callback, Update, WatchHandle};
-#[cfg(any(target_os = "windows", target_os = "linux", target_vendor = "apple"))]
+#[cfg(any(windows, all(unix, not(target_os = "android"))))]
 use std::sync::{Arc, Condvar, Mutex};
-#[cfg(any(target_os = "windows", target_os = "linux", target_vendor = "apple"))]
+#[cfg(any(windows, all(unix, not(target_os = "android"))))]
 use std::time::Duration;
 
-#[cfg(any(target_os = "windows", target_os = "linux", target_vendor = "apple"))]
+#[cfg(any(windows, all(unix, not(target_os = "android"))))]
 mod helpers;
 
-#[cfg(any(target_os = "windows", target_os = "linux", target_vendor = "apple"))]
+#[cfg(any(windows, all(unix, not(target_os = "android"))))]
 fn setup_callback_handler() -> (
     impl Fn(usize) + 'static,
     Arc<Mutex<Vec<Update>>>,
@@ -56,7 +56,7 @@ fn setup_callback_handler() -> (
     (wait_for_callback, updates_2, handle)
 }
 
-#[cfg(any(target_os = "windows", target_os = "linux", target_vendor = "apple"))]
+#[cfg(any(windows, all(unix, not(target_os = "android"))))]
 fn assert_has_ip(
     updates: &Arc<Mutex<Vec<Update>>>,
     update_index: usize,
@@ -68,7 +68,7 @@ fn assert_has_ip(
     helpers::assert_update_has_ip(update, ip_record, should_have);
 }
 
-#[cfg(any(target_os = "windows", target_os = "linux", target_vendor = "apple"))]
+#[cfg(any(windows, all(unix, not(target_os = "android"))))]
 fn assert_is_initial(updates: &Arc<Mutex<Vec<Update>>>, update_index: usize, expected: bool) {
     let updates_guard = updates.lock().unwrap();
     assert_eq!(updates_guard[update_index].is_initial, expected);
@@ -92,7 +92,7 @@ fn test_list_interfaces_has_loopback() {
 
 #[test]
 #[ignore] // needs to run in administrator/root context
-#[cfg(any(target_os = "windows", target_os = "linux", target_vendor = "apple"))]
+#[cfg(any(windows, all(unix, not(target_os = "android"))))]
 #[serial(loopback)]
 fn test_watch_interfaces_callback_loopback_changes() {
     use helpers::sys::*;
@@ -134,7 +134,7 @@ fn test_watch_interfaces_callback_loopback_changes() {
 
 #[test]
 #[ignore] // needs to run in administrator/root context
-#[cfg(any(target_os = "windows", target_os = "linux", target_vendor = "apple"))]
+#[cfg(any(windows, all(unix, not(target_os = "android"))))]
 #[serial(loopback)]
 fn test_watch_interfaces_blocking_loopback_changes() {
     use helpers::assert_update_has_ip;

@@ -1,5 +1,7 @@
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use android_build::{DebugInfo, Dexer, JavaBuild};
 use std::env;
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use std::path::PathBuf;
 
 fn main() {
@@ -8,6 +10,15 @@ fn main() {
         return;
     }
 
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    panic!("Android Java build is only supported from Linux, macOS, or Windows hosts");
+
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+    build_android_java();
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+fn build_android_java() {
     let android_jar = android_build::android_jar(None).expect("Unable to locate android.jar path");
     let is_release_build = env::var("PROFILE") == Ok("release".to_owned());
     let java_path = "java/net/octet_stream/netwatcher/NetwatcherSupportAndroid.java";
@@ -51,6 +62,7 @@ fn main() {
     }
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn debug_info(is_release_build: bool) -> DebugInfo {
     DebugInfo {
         line_numbers: !is_release_build,

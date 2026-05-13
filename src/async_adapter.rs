@@ -1,39 +1,41 @@
 use std::{future::Future, pin::Pin};
 
-#[cfg(not(any(target_os = "linux", target_vendor = "apple")))]
+#[cfg(any(windows, target_os = "android"))]
 use std::marker::PhantomData;
 
 #[cfg(all(
     any(feature = "async-io", feature = "tokio"),
-    any(target_os = "linux", target_vendor = "apple")
+    unix,
+    not(target_os = "android")
 ))]
 use std::io;
 #[cfg(all(
     any(feature = "async-io", feature = "tokio"),
-    any(target_os = "linux", target_vendor = "apple")
+    unix,
+    not(target_os = "android")
 ))]
 use std::os::fd::AsFd;
-#[cfg(any(target_os = "linux", target_vendor = "apple"))]
+#[cfg(all(unix, not(target_os = "android")))]
 use std::os::fd::{BorrowedFd, OwnedFd};
 
 /// Runtime-owned readiness source passed to an [`AsyncFdAdapter`].
 ///
-/// On Linux and Apple platforms this wraps the nonblocking watch file descriptor.
+/// On non-Android Unix platforms this wraps the nonblocking watch file descriptor.
 /// On other platforms the value is never used.
 pub struct AsyncFd {
-    #[cfg(any(target_os = "linux", target_vendor = "apple"))]
+    #[cfg(all(unix, not(target_os = "android")))]
     inner: OwnedFd,
-    #[cfg(not(any(target_os = "linux", target_vendor = "apple")))]
+    #[cfg(any(windows, target_os = "android"))]
     _private: (),
 }
 
 impl AsyncFd {
-    #[cfg(any(target_os = "linux", target_vendor = "apple"))]
+    #[cfg(all(unix, not(target_os = "android")))]
     pub(crate) fn from_owned_fd(inner: OwnedFd) -> Self {
         Self { inner }
     }
 
-    #[cfg(any(target_os = "linux", target_vendor = "apple"))]
+    #[cfg(all(unix, not(target_os = "android")))]
     pub fn into_owned_fd(self) -> OwnedFd {
         self.inner
     }
@@ -41,22 +43,22 @@ impl AsyncFd {
 
 /// Borrowed readiness source returned by an [`AsyncFdReadyGuard`].
 ///
-/// On Linux and Apple platforms this wraps the watch file descriptor.
+/// On non-Android Unix platforms this wraps the watch file descriptor.
 /// On other platforms the value is never used.
 pub struct AsyncFdRef<'a> {
-    #[cfg(any(target_os = "linux", target_vendor = "apple"))]
+    #[cfg(all(unix, not(target_os = "android")))]
     inner: BorrowedFd<'a>,
-    #[cfg(not(any(target_os = "linux", target_vendor = "apple")))]
+    #[cfg(any(windows, target_os = "android"))]
     _marker: PhantomData<&'a ()>,
 }
 
 impl<'a> AsyncFdRef<'a> {
-    #[cfg(any(target_os = "linux", target_vendor = "apple"))]
+    #[cfg(all(unix, not(target_os = "android")))]
     pub fn from_borrowed_fd(inner: BorrowedFd<'a>) -> Self {
         Self { inner }
     }
 
-    #[cfg(any(target_os = "linux", target_vendor = "apple"))]
+    #[cfg(all(unix, not(target_os = "android")))]
     pub fn as_fd(&self) -> BorrowedFd<'_> {
         self.inner
     }
@@ -90,14 +92,14 @@ pub struct AsyncIo;
 #[cfg(feature = "tokio")]
 pub struct Tokio;
 
-#[cfg(all(feature = "tokio", any(target_os = "linux", target_vendor = "apple")))]
+#[cfg(all(feature = "tokio", unix, not(target_os = "android")))]
 impl AsyncFdAdapter for Tokio {
     fn register(fd: AsyncFd) -> io::Result<Box<dyn AsyncFdRegistration>> {
         Ok(Box::new(tokio::io::unix::AsyncFd::new(fd.into_owned_fd())?))
     }
 }
 
-#[cfg(all(feature = "tokio", any(target_os = "linux", target_vendor = "apple")))]
+#[cfg(all(feature = "tokio", unix, not(target_os = "android")))]
 impl AsyncFdRegistration for tokio::io::unix::AsyncFd<OwnedFd> {
     fn readable(&self) -> AsyncFdReadableFuture<'_> {
         Box::pin(async move {
@@ -107,7 +109,7 @@ impl AsyncFdRegistration for tokio::io::unix::AsyncFd<OwnedFd> {
     }
 }
 
-#[cfg(all(feature = "tokio", any(target_os = "linux", target_vendor = "apple")))]
+#[cfg(all(feature = "tokio", unix, not(target_os = "android")))]
 impl AsyncFdReadyGuard for tokio::io::unix::AsyncFdReadyGuard<'_, OwnedFd> {
     fn fd(&self) -> AsyncFdRef<'_> {
         AsyncFdRef::from_borrowed_fd(self.get_inner().as_fd())
@@ -125,10 +127,7 @@ impl AsyncFdAdapter for Tokio {
     }
 }
 
-#[cfg(all(
-    feature = "async-io",
-    any(target_os = "linux", target_vendor = "apple")
-))]
+#[cfg(all(feature = "async-io", unix, not(target_os = "android")))]
 impl AsyncFdAdapter for AsyncIo {
     fn register(fd: AsyncFd) -> io::Result<Box<dyn AsyncFdRegistration>> {
         Ok(Box::new(AsyncIoRegistration(async_io::Async::new(
@@ -137,22 +136,13 @@ impl AsyncFdAdapter for AsyncIo {
     }
 }
 
-#[cfg(all(
-    feature = "async-io",
-    any(target_os = "linux", target_vendor = "apple")
-))]
+#[cfg(all(feature = "async-io", unix, not(target_os = "android")))]
 struct AsyncIoRegistration(async_io::Async<OwnedFd>);
 
-#[cfg(all(
-    feature = "async-io",
-    any(target_os = "linux", target_vendor = "apple")
-))]
+#[cfg(all(feature = "async-io", unix, not(target_os = "android")))]
 struct AsyncIoReadyGuard<'a>(&'a async_io::Async<OwnedFd>);
 
-#[cfg(all(
-    feature = "async-io",
-    any(target_os = "linux", target_vendor = "apple")
-))]
+#[cfg(all(feature = "async-io", unix, not(target_os = "android")))]
 impl AsyncFdRegistration for AsyncIoRegistration {
     fn readable(&self) -> AsyncFdReadableFuture<'_> {
         Box::pin(async move {
@@ -162,10 +152,7 @@ impl AsyncFdRegistration for AsyncIoRegistration {
     }
 }
 
-#[cfg(all(
-    feature = "async-io",
-    any(target_os = "linux", target_vendor = "apple")
-))]
+#[cfg(all(feature = "async-io", unix, not(target_os = "android")))]
 impl AsyncFdReadyGuard for AsyncIoReadyGuard<'_> {
     fn fd(&self) -> AsyncFdRef<'_> {
         AsyncFdRef::from_borrowed_fd(self.0.get_ref().as_fd())

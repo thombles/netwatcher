@@ -1,0 +1,38 @@
+name: BSD Build
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-freebsd:
+    strategy:
+      matrix:
+        include:
+        - bsd: FreeBSD
+          release: "15.0"
+
+    runs-on: ubuntu-latest
+    name: ${{ matrix.bsd }} ${{ matrix.release }}
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Run Rust CI in FreeBSD
+      uses: vmactions/freebsd-vm@v1
+      with:
+        release: ${{ matrix.release }}
+        usesh: true
+        copyback: false
+        prepare: |
+          pkg install -y curl ca_root_nss
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --component clippy --component rustfmt
+          . "$HOME/.cargo/env"
+          rustc --version
+          cargo --version
+          sh .github/scripts/rust-ci.sh
