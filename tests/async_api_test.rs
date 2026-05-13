@@ -1,27 +1,27 @@
 #[cfg(all(
-    any(target_os = "windows", target_os = "linux", target_vendor = "apple"),
+    any(windows, all(unix, not(target_os = "android"))),
     any(feature = "tokio", feature = "async-io")
 ))]
 use netwatcher::IpRecord;
 #[cfg(all(
-    any(target_os = "windows", target_os = "linux", target_vendor = "apple"),
+    any(windows, all(unix, not(target_os = "android"))),
     any(feature = "tokio", feature = "async-io")
 ))]
 use serial_test::serial;
 #[cfg(all(
-    any(target_os = "windows", target_os = "linux", target_vendor = "apple"),
+    any(windows, all(unix, not(target_os = "android"))),
     any(feature = "tokio", feature = "async-io")
 ))]
 use std::net::{IpAddr, Ipv4Addr};
 
 #[cfg(all(
-    any(target_os = "windows", target_os = "linux", target_vendor = "apple"),
+    any(windows, all(unix, not(target_os = "android"))),
     any(feature = "tokio", feature = "async-io")
 ))]
 mod helpers;
 
 #[cfg(all(
-    any(target_os = "windows", target_os = "linux", target_vendor = "apple"),
+    any(windows, all(unix, not(target_os = "android"))),
     any(feature = "tokio", feature = "async-io")
 ))]
 fn loopback_expectations() -> (String, IpRecord, IpRecord) {
@@ -43,7 +43,7 @@ fn loopback_expectations() -> (String, IpRecord, IpRecord) {
 }
 
 #[cfg(all(
-    any(target_os = "windows", target_os = "linux", target_vendor = "apple"),
+    any(windows, all(unix, not(target_os = "android"))),
     any(feature = "tokio", feature = "async-io")
 ))]
 async fn run_async_watch_scenario(mut watch: netwatcher::AsyncWatch) {
@@ -72,10 +72,7 @@ async fn run_async_watch_scenario(mut watch: netwatcher::AsyncWatch) {
 
 #[test]
 #[ignore]
-#[cfg(all(
-    any(target_os = "windows", target_os = "linux", target_vendor = "apple"),
-    feature = "tokio"
-))]
+#[cfg(all(any(windows, all(unix, not(target_os = "android"))), feature = "tokio"))]
 #[serial(loopback)]
 fn test_watch_interfaces_async_tokio_loopback_changes() {
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -90,10 +87,7 @@ fn test_watch_interfaces_async_tokio_loopback_changes() {
 }
 
 #[test]
-#[cfg(all(
-    any(target_os = "windows", target_os = "linux", target_vendor = "apple"),
-    feature = "tokio"
-))]
+#[cfg(all(any(windows, all(unix, not(target_os = "android"))), feature = "tokio"))]
 fn test_watch_interfaces_async_tokio_spawned_task() {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -113,7 +107,7 @@ fn test_watch_interfaces_async_tokio_spawned_task() {
 #[test]
 #[ignore]
 #[cfg(all(
-    any(target_os = "windows", target_os = "linux", target_vendor = "apple"),
+    any(windows, all(unix, not(target_os = "android"))),
     feature = "async-io"
 ))]
 #[serial(loopback)]

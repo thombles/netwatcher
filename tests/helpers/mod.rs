@@ -12,6 +12,15 @@ pub mod sys;
 #[path = "sys_mac.rs"]
 pub mod sys;
 
+#[cfg(all(
+    unix,
+    not(target_os = "linux"),
+    not(target_vendor = "apple"),
+    not(target_os = "android")
+))]
+#[path = "sys_bsd.rs"]
+pub mod sys;
+
 pub fn assert_update_has_ip(update: &Update, ip_record: &IpRecord, should_have: bool) {
     let has_ip = update
         .interfaces
