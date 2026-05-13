@@ -10,10 +10,11 @@
 | Platform | Min Version | List | Watch | Notes                                                                                 |
 |----------|-------------|------|-------|---------------------------------------------------------------------------------------|
 | Windows  | -           | ✅    | ✅     |                                                                                       |
-| Mac      | -           | ✅    | ✅     | Callback watch creates background thread                                                       |
-| Linux    | -           | ✅    | ✅     | Callback watch creates background thread                                                       |
-| iOS      | -           | ✅    | ✅     | Callback watch creates background thread                                                       |
-| Android  | 5.0         | ✅    | ✅     | Watch requires extra setup. See Android Setup instructions below.             |
+| Mac      | -           | ✅    | ✅     | Callback watch creates background thread. |
+| Linux    | -           | ✅    | ✅     | Callback watch creates background thread. |
+| iOS      | -           | ✅    | ✅     | Callback watch creates background thread. |
+| Android  | 5.0         | ✅    | ✅     | Watch requires extra setup. See Android Setup instructions below. |
+| BSD  | - | ✅ | ✅ | FreeBSD 15.0 is tested in CI |
 
 ## Usage
 
