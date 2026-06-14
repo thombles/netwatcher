@@ -5,6 +5,8 @@
 
 `netwatcher` is a cross-platform Rust library for enumerating network interfaces and their IP addresses, featuring the ability to watch for changes to those interfaces _efficiently_. It uses platform-specific methods to detect when interface changes have occurred instead of polling, which means that you find out about changes more quickly and there is no CPU or wakeup overhead when nothing is happening.
 
+Sync and async APIs are available, with no extra dependencies for sync users. If you are using tokio, enable feature `tokio`. For async-io, enable `async-io`. Other reactors may be used by implementing the appropriate traits.
+
 ## Current platform support
 
 | Platform | Min Version | List | Watch | Notes                                                                                 |
@@ -14,11 +16,13 @@
 | Linux    | -           | ✅    | ✅     | Callback watch creates background thread. |
 | iOS      | -           | ✅    | ✅     | Callback watch creates background thread. |
 | Android  | 5.0         | ✅    | ✅     | Watch requires extra setup. See Android Setup instructions below. |
-| BSD  | - | ✅ | ✅ | FreeBSD 15.0 is tested in CI |
+| BSD  | - | ✅ | ✅ | FreeBSD 15.0 is tested in CI. |
 
 ## Usage
 
 ### Listing interfaces
+
+Use [`list_interfaces`](https://docs.rs/netwatcher/latest/netwatcher/fn.list_interfaces.html).
 
 ```rust
 // Returns a HashMap from ifindex (a `u32`) to an `Interface` struct.
@@ -30,15 +34,15 @@ for i in interfaces.values() {
 
 ### Watching for changes to interfaces
 
-Choose one of the three watch APIs:
+Choose one of the three options:
 
-- `watch_interfaces_with_callback`: invoke a callback when interface changes occur. On macOS, Linux, and iOS this creates a background thread.
-- `watch_interfaces_blocking`: waits in the current thread until there is a change. If nothing changes, `changed()` never returns, so this is best for a dedicated thread or a program with no other work to do until interfaces change.
-- `watch_interfaces_async::<T>`: allows you to `.await` interface changes by integrating with an async runtime adapter such as `Tokio` or `AsyncIo`.
+- **Sync callback:** [`watch_interfaces_with_callback`](https://docs.rs/netwatcher/latest/netwatcher/fn.watch_interfaces_with_callback.html)
+- **Sync blocking:** [`watch_interfaces_blocking`](https://docs.rs/netwatcher/latest/netwatcher/fn.watch_interfaces_blocking.html)
+- **Async:** [`watch_interfaces_async::<T>`](https://docs.rs/netwatcher/latest/netwatcher/fn.watch_interfaces_async.html)
 
-#### Callback watch
+#### Sync callback watch
 
-This is the simplest option when you want change notifications delivered to a callback.
+Deliver change notifications to a callback.
 
 ```rust
 let handle = netwatcher::watch_interfaces_with_callback(|update| {
@@ -72,9 +76,9 @@ let handle = netwatcher::watch_interfaces_with_callback(|update| {
 drop(handle);
 ```
 
-#### Blocking watch
+#### Sync blocking watch
 
-This waits in the current thread until an update is available.
+Park the current thread until a change notification is available.
 
 ```rust,no_run
 let mut watch = netwatcher::watch_interfaces_blocking().unwrap();
@@ -88,7 +92,7 @@ loop {
 
 #### Async watch
 
-This integrates with your async runtime. You will probably want to enable a crate feature such as `tokio` or `async-io` in order to use the appropriate adapter.
+`.await` interface changes. This requires a small amount of integration with your async runtime. You will probably want to enable a crate feature such as `tokio` or `async-io` to use the provided adapter.
 
 ```rust,no_run
 use netwatcher::async_adapter::Tokio;
