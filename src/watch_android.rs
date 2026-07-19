@@ -303,11 +303,20 @@ pub extern "system" fn Java_net_octet_1stream_netwatcher_NetwatcherSupportAndroi
         return;
     }
 
-    let update = new_list.update_from(&state.current_interfaces);
+    let update = (!state.callback_watchers.is_empty())
+        .then(|| new_list.update_from(&state.current_interfaces));
     state.current_interfaces = new_list;
 
-    for callback in state.callback_watchers.values_mut() {
-        callback(update.clone());
+    if let Some(update) = update {
+        let mut callbacks = state.callback_watchers.values_mut().peekable();
+        while let Some(callback) = callbacks.next() {
+            if callbacks.peek().is_some() {
+                callback(update.clone());
+            } else {
+                callback(update);
+                break;
+            }
+        }
     }
     for queue in state.queued_watchers.values() {
         push_async_list(queue, state.current_interfaces.clone());

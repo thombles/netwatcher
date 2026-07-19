@@ -7,7 +7,30 @@ fn main() {
         println!("Interface update!");
         println!("Initial: {}", update.is_initial);
         println!("State: {:#?}", update.interfaces);
-        println!("Diff: {:#?}", update.diff);
+        for interface in update.diff.added.values() {
+            println!(
+                "Added interface: {} (ifindex {})",
+                interface.name, interface.index
+            );
+        }
+        for interface in update.diff.removed.values() {
+            println!(
+                "Removed interface: {} (ifindex {})",
+                interface.name, interface.index
+            );
+        }
+        for (ifindex, address) in update.addrs_added() {
+            println!(
+                "Added address on ifindex {}: {}/{}",
+                ifindex, address.ip, address.prefix_len
+            );
+        }
+        for (ifindex, address) in update.addrs_removed() {
+            println!(
+                "Removed address from ifindex {}: {}/{}",
+                ifindex, address.ip, address.prefix_len
+            );
+        }
     })
     .unwrap();
 

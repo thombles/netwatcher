@@ -39,23 +39,26 @@
 //!     println!("Is initial update: {}", update.is_initial);
 //!     println!("Current interface map: {:#?}", update.interfaces);
 //!
-//!     // Interfaces may appear or disappear entirely.
-//!     for ifindex in &update.diff.added {
-//!         println!("ifindex {} was added", ifindex);
+//!     // Added and removed entries contain the complete interface state.
+//!     for interface in update.diff.added.values() {
+//!         println!(
+//!             "new interface: {} (ifindex {})",
+//!             interface.name, interface.index
+//!         );
 //!     }
-//!     for ifindex in &update.diff.removed {
-//!         println!("ifindex {} was removed", ifindex);
+//!     for interface in update.diff.removed.values() {
+//!         println!(
+//!             "removed interface: {} (ifindex {})",
+//!             interface.name, interface.index
+//!         );
 //!     }
 //!
-//!     // Existing interfaces may gain or lose IPs.
-//!     for (ifindex, diff) in &update.diff.modified {
-//!         let interface = &update.interfaces[ifindex];
-//!         for addr in &diff.addrs_added {
-//!             println!("{} gained {}/{}", interface.name, addr.ip, addr.prefix_len);
-//!         }
-//!         for addr in &diff.addrs_removed {
-//!             println!("{} lost {}/{}", interface.name, addr.ip, addr.prefix_len);
-//!         }
+//!     // These include addresses on entirely added or removed interfaces.
+//!     for (ifindex, addr) in update.addrs_added() {
+//!         println!("ifindex {} gained {}/{}", ifindex, addr.ip, addr.prefix_len);
+//!     }
+//!     for (ifindex, addr) in update.addrs_removed() {
+//!         println!("ifindex {} lost {}/{}", ifindex, addr.ip, addr.prefix_len);
 //!     }
 //! })
 //! .unwrap();
@@ -107,7 +110,6 @@
 use std::{
     collections::{HashMap, HashSet},
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
-    ops::Sub,
 };
 
 mod error;
@@ -185,27 +187,80 @@ impl Interface {
 ///
 /// This contains up-to-date information about all interfaces, plus a diff which
 /// details which interfaces and IP addresses have changed since the previous update.
+/// For an initial update, the diff treats every current interface as newly added.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Update {
     /// Whether this update represents the initial existing interface state.
     pub is_initial: bool,
+    /// The complete current interface snapshot, keyed by interface index.
     pub interfaces: HashMap<IfIndex, Interface>,
+    /// The changes from the preceding snapshot to `interfaces`.
     pub diff: UpdateDiff,
+}
+
+impl Update {
+    /// Iterate over every address that appeared in this update.
+    ///
+    /// This includes addresses belonging to newly added interfaces as well as
+    /// addresses added to interfaces that were present in both snapshots. Each
+    /// item is `(ifindex, &IpRecord)`.
+    pub fn addrs_added(&self) -> impl Iterator<Item = (IfIndex, &IpRecord)> + '_ {
+        let from_added_interfaces = self
+            .diff
+            .added
+            .iter()
+            .flat_map(|(&idx, interface)| interface.ips.iter().map(move |addr| (idx, addr)));
+        let from_modified_interfaces = self
+            .diff
+            .modified
+            .iter()
+            .flat_map(|(&idx, diff)| diff.addrs_added.iter().map(move |addr| (idx, addr)));
+
+        from_added_interfaces.chain(from_modified_interfaces)
+    }
+
+    /// Iterate over every address that disappeared in this update.
+    ///
+    /// This includes addresses belonging to removed interfaces as well as
+    /// addresses removed from interfaces that were present in both snapshots.
+    /// Each item is `(ifindex, &IpRecord)`.
+    pub fn addrs_removed(&self) -> impl Iterator<Item = (IfIndex, &IpRecord)> + '_ {
+        let from_removed_interfaces = self
+            .diff
+            .removed
+            .iter()
+            .flat_map(|(&idx, interface)| interface.ips.iter().map(move |addr| (idx, addr)));
+        let from_modified_interfaces = self
+            .diff
+            .modified
+            .iter()
+            .flat_map(|(&idx, diff)| diff.addrs_removed.iter().map(move |addr| (idx, addr)));
+
+        from_removed_interfaces.chain(from_modified_interfaces)
+    }
 }
 
 /// What changed between one `Update` and the next.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct UpdateDiff {
-    pub added: Vec<IfIndex>,
-    pub removed: Vec<IfIndex>,
+    /// Interfaces that appeared, containing their new state.
+    pub added: HashMap<IfIndex, Interface>,
+    /// Interfaces that disappeared, containing their last known state.
+    pub removed: HashMap<IfIndex, Interface>,
+    /// Changes to interfaces that were present in both snapshots.
     pub modified: HashMap<IfIndex, InterfaceDiff>,
 }
 
 /// What changed within a single interface between updates, if it was present in both.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct InterfaceDiff {
+    /// Whether the interface name changed.
+    pub name_changed: bool,
+    /// Whether the hardware address changed.
     pub hw_addr_changed: bool,
+    /// Addresses that appeared on this interface.
     pub addrs_added: Vec<IpRecord>,
+    /// Addresses that disappeared from this interface.
     pub addrs_removed: Vec<IpRecord>,
 }
 
@@ -222,33 +277,47 @@ impl List {
     }
 
     fn update_from_with_flag(&self, prev: &List, is_initial: bool) -> Update {
-        let prev_index_set: HashSet<IfIndex> = prev.0.keys().cloned().collect();
-        let curr_index_set: HashSet<IfIndex> = self.0.keys().cloned().collect();
-        let added = curr_index_set.sub(&prev_index_set).into_iter().collect();
-        let removed = prev_index_set.sub(&curr_index_set).into_iter().collect();
+        let added = self
+            .0
+            .iter()
+            .filter(|(index, _)| !prev.0.contains_key(index))
+            .map(|(&index, interface)| (index, interface.clone()))
+            .collect();
+        let removed = prev
+            .0
+            .iter()
+            .filter(|(index, _)| !self.0.contains_key(index))
+            .map(|(&index, interface)| (index, interface.clone()))
+            .collect();
         let mut modified = HashMap::new();
-        for index in curr_index_set.intersection(&prev_index_set) {
-            if prev.0[index] == self.0[index] {
+        for (&index, interface) in &self.0 {
+            let Some(prev_interface) = prev.0.get(&index) else {
+                continue;
+            };
+            if prev_interface == interface {
                 continue;
             }
-            let prev_addr_set: HashSet<&IpRecord> = prev.0[index].ips.iter().collect();
-            let curr_addr_set: HashSet<&IpRecord> = self.0[index].ips.iter().collect();
-            let addrs_added: Vec<IpRecord> = curr_addr_set
-                .sub(&prev_addr_set)
-                .iter()
-                .cloned()
-                .cloned()
-                .collect();
-            let addrs_removed: Vec<IpRecord> = prev_addr_set
-                .sub(&curr_addr_set)
-                .iter()
-                .cloned()
-                .cloned()
-                .collect();
-            let hw_addr_changed = prev.0[index].hw_addr != self.0[index].hw_addr;
+            let (addrs_added, addrs_removed) = if prev_interface.ips == interface.ips {
+                (Vec::new(), Vec::new())
+            } else {
+                let prev_addr_set: HashSet<&IpRecord> = prev_interface.ips.iter().collect();
+                let curr_addr_set: HashSet<&IpRecord> = interface.ips.iter().collect();
+                let addrs_added = curr_addr_set
+                    .difference(&prev_addr_set)
+                    .map(|addr| (*addr).clone())
+                    .collect();
+                let addrs_removed = prev_addr_set
+                    .difference(&curr_addr_set)
+                    .map(|addr| (*addr).clone())
+                    .collect();
+                (addrs_added, addrs_removed)
+            };
+            let name_changed = prev_interface.name != interface.name;
+            let hw_addr_changed = prev_interface.hw_addr != interface.hw_addr;
             modified.insert(
-                *index,
+                index,
                 InterfaceDiff {
+                    name_changed,
                     hw_addr_changed,
                     addrs_added,
                     addrs_removed,
@@ -387,4 +456,149 @@ pub fn watch_interfaces_blocking() -> Result<BlockingWatch, Error> {
 /// The first call to `changed()` returns the current interface snapshot immediately.
 pub fn watch_interfaces_async<A: async_adapter::AsyncFdAdapter>() -> Result<AsyncWatch, Error> {
     watch::watch_interfaces_async::<A>().map(|handle| AsyncWatch { _inner: handle })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ip(last_octet: u8) -> IpRecord {
+        IpRecord {
+            ip: IpAddr::V4(Ipv4Addr::new(192, 0, 2, last_octet)),
+            prefix_len: 24,
+        }
+    }
+
+    fn interface(
+        index: IfIndex,
+        name: &str,
+        hw_addr: &str,
+        ips: impl IntoIterator<Item = IpRecord>,
+    ) -> Interface {
+        Interface {
+            index,
+            name: name.into(),
+            hw_addr: hw_addr.into(),
+            ips: ips.into_iter().collect(),
+        }
+    }
+
+    fn list(interfaces: impl IntoIterator<Item = Interface>) -> List {
+        List(
+            interfaces
+                .into_iter()
+                .map(|interface| (interface.index, interface))
+                .collect(),
+        )
+    }
+
+    fn owned_addresses<'a>(
+        addresses: impl Iterator<Item = (IfIndex, &'a IpRecord)>,
+    ) -> HashSet<(IfIndex, IpRecord)> {
+        addresses
+            .map(|(index, address)| (index, address.clone()))
+            .collect()
+    }
+
+    #[test]
+    fn initial_update_reports_complete_interfaces_and_addresses_as_added() {
+        let first = interface(1, "first", "00:00:00:00:00:01", [ip(1), ip(2)]);
+        let second = interface(2, "second", "00:00:00:00:00:02", []);
+        let current = list([first.clone(), second.clone()]);
+
+        let update = current.initial_update();
+
+        assert!(update.is_initial);
+        assert_eq!(update.interfaces, current.0);
+        assert_eq!(
+            update.diff.added,
+            HashMap::from([(first.index, first), (second.index, second)])
+        );
+        assert!(update.diff.removed.is_empty());
+        assert!(update.diff.modified.is_empty());
+        assert_eq!(
+            owned_addresses(update.addrs_added()),
+            HashSet::from([(1, ip(1)), (1, ip(2))])
+        );
+        assert_eq!(update.addrs_removed().next(), None);
+    }
+
+    #[test]
+    fn update_preserves_complete_added_and_removed_interfaces() {
+        let removed = interface(1, "removed", "00:00:00:00:00:01", [ip(1), ip(2)]);
+        let before = interface(2, "before", "00:00:00:00:00:02", [ip(10), ip(11)]);
+        let after = interface(2, "after", "00:00:00:00:00:22", [ip(10), ip(12)]);
+        let added = interface(3, "added", "00:00:00:00:00:03", [ip(20), ip(21)]);
+        let unchanged = interface(4, "unchanged", "00:00:00:00:00:04", [ip(30)]);
+        let previous = list([removed.clone(), before, unchanged.clone()]);
+        let current = list([after.clone(), added.clone(), unchanged]);
+
+        let update = current.update_from(&previous);
+
+        assert!(!update.is_initial);
+        assert_eq!(
+            update.diff.added,
+            HashMap::from([(added.index, added.clone())])
+        );
+        assert_eq!(
+            update.diff.removed,
+            HashMap::from([(removed.index, removed.clone())])
+        );
+        assert_eq!(
+            update.diff.modified,
+            HashMap::from([(
+                after.index,
+                InterfaceDiff {
+                    name_changed: true,
+                    hw_addr_changed: true,
+                    addrs_added: vec![ip(12)],
+                    addrs_removed: vec![ip(11)],
+                }
+            )])
+        );
+        assert_eq!(
+            owned_addresses(update.addrs_added()),
+            HashSet::from([(2, ip(12)), (3, ip(20)), (3, ip(21))])
+        );
+        assert_eq!(
+            owned_addresses(update.addrs_removed()),
+            HashSet::from([(1, ip(1)), (1, ip(2)), (2, ip(11))])
+        );
+    }
+
+    #[test]
+    fn metadata_only_change_does_not_report_address_changes() {
+        let previous = list([interface(1, "before", "00:00:00:00:00:01", [ip(1)])]);
+        let current = list([interface(1, "after", "00:00:00:00:00:01", [ip(1)])]);
+
+        let update = current.update_from(&previous);
+
+        assert_eq!(
+            update.diff.modified,
+            HashMap::from([(
+                1,
+                InterfaceDiff {
+                    name_changed: true,
+                    hw_addr_changed: false,
+                    addrs_added: Vec::new(),
+                    addrs_removed: Vec::new(),
+                }
+            )])
+        );
+        assert_eq!(update.addrs_added().next(), None);
+        assert_eq!(update.addrs_removed().next(), None);
+    }
+
+    #[test]
+    fn unchanged_update_has_an_empty_diff() {
+        let current = list([interface(1, "unchanged", "00:00:00:00:00:01", [ip(1)])]);
+
+        let update = current.update_from(&current);
+
+        assert!(!update.is_initial);
+        assert_eq!(update.interfaces, current.0);
+        assert_eq!(update.diff, UpdateDiff::default());
+        assert_eq!(update.addrs_added().next(), None);
+        assert_eq!(update.addrs_removed().next(), None);
+    }
 }

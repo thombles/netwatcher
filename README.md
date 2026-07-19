@@ -50,23 +50,26 @@ let handle = netwatcher::watch_interfaces_with_callback(|update| {
     println!("Is initial update: {}", update.is_initial);
     println!("Current interface map: {:#?}", update.interfaces);
 
-    // Interfaces may appear or disappear entirely.
-    for ifindex in &update.diff.added {
-        println!("ifindex {} was added", ifindex);
+    // Added and removed entries contain the complete interface state.
+    for interface in update.diff.added.values() {
+        println!(
+            "new interface: {} (ifindex {})",
+            interface.name, interface.index
+        );
     }
-    for ifindex in &update.diff.removed {
-        println!("ifindex {} was removed", ifindex);
+    for interface in update.diff.removed.values() {
+        println!(
+            "removed interface: {} (ifindex {})",
+            interface.name, interface.index
+        );
     }
 
-    // Existing interfaces may gain or lose IPs.
-    for (ifindex, diff) in &update.diff.modified {
-        let interface = &update.interfaces[ifindex];
-        for addr in &diff.addrs_added {
-            println!("{} gained {}/{}", interface.name, addr.ip, addr.prefix_len);
-        }
-        for addr in &diff.addrs_removed {
-            println!("{} lost {}/{}", interface.name, addr.ip, addr.prefix_len);
-        }
+    // These include addresses on entirely added or removed interfaces.
+    for (ifindex, addr) in update.addrs_added() {
+        println!("ifindex {} gained {}/{}", ifindex, addr.ip, addr.prefix_len);
+    }
+    for (ifindex, addr) in update.addrs_removed() {
+        println!("ifindex {} lost {}/{}", ifindex, addr.ip, addr.prefix_len);
     }
 })
 .unwrap();
