@@ -35,6 +35,12 @@ impl NotificationHandle {
     }
 }
 
+impl Drop for NotificationHandle {
+    fn drop(&mut self) {
+        self.cancel();
+    }
+}
+
 struct WatchState {
     cursor: crate::UpdateCursor,
     /// User's callback
@@ -42,7 +48,7 @@ struct WatchState {
 }
 
 pub(crate) struct WatchHandle {
-    hnd: NotificationHandle,
+    _hnd: NotificationHandle,
     _state: Pin<Box<Mutex<WatchState>>>,
 }
 
@@ -58,23 +64,17 @@ type QueuedWatchRegistration = (
 );
 
 pub(crate) struct AsyncWatch {
-    hnd: NotificationHandle,
+    _hnd: NotificationHandle,
     queue: SharedAsyncCallbackQueue,
     cursor: crate::UpdateCursor,
     _state: Pin<Box<Mutex<QueuedWatchState>>>,
 }
 
 pub(crate) struct BlockingWatch {
-    hnd: NotificationHandle,
+    _hnd: NotificationHandle,
     queue: SharedAsyncCallbackQueue,
     cursor: crate::UpdateCursor,
     _state: Pin<Box<Mutex<QueuedWatchState>>>,
-}
-
-impl Drop for AsyncWatch {
-    fn drop(&mut self) {
-        self.hnd.cancel();
-    }
 }
 
 impl AsyncWatch {
@@ -88,12 +88,6 @@ impl AsyncWatch {
     }
 }
 
-impl Drop for BlockingWatch {
-    fn drop(&mut self) {
-        self.hnd.cancel();
-    }
-}
-
 impl BlockingWatch {
     pub(crate) fn changed(&mut self) -> Update {
         loop {
@@ -102,12 +96,6 @@ impl BlockingWatch {
                 return update;
             }
         }
-    }
-}
-
-impl Drop for WatchHandle {
-    fn drop(&mut self) {
-        self.hnd.cancel();
     }
 }
 
@@ -124,21 +112,20 @@ pub(crate) fn watch_interfaces_with_callback<F: FnMut(Update) + Send + 'static>(
     let res = unsafe {
         NotifyUnicastIpAddressChange(AF_UNSPEC, Some(notif), Some(state_ctx), false, &mut hnd)
     };
-    match res {
-        NO_ERROR => {
-            // Trigger an initial update
-            handle_notif(&mut state.lock().unwrap(), crate::list::list_interfaces()?);
-            // Then return the handle
-            Ok(WatchHandle {
-                hnd: NotificationHandle(hnd),
-                _state: state,
-            })
-        }
-        ERROR_INVALID_HANDLE => Err(Error::InvalidHandle),
-        ERROR_INVALID_PARAMETER => Err(Error::InvalidParameter),
-        ERROR_NOT_ENOUGH_MEMORY => Err(Error::NotEnoughMemory),
-        _ => Err(Error::UnexpectedWindowsResult(res.0)),
-    }
+    let hnd = match res {
+        NO_ERROR => NotificationHandle(hnd),
+        ERROR_INVALID_HANDLE => return Err(Error::InvalidHandle),
+        ERROR_INVALID_PARAMETER => return Err(Error::InvalidParameter),
+        ERROR_NOT_ENOUGH_MEMORY => return Err(Error::NotEnoughMemory),
+        _ => return Err(Error::UnexpectedWindowsResult(res.0)),
+    };
+
+    handle_notif(&mut state.lock().unwrap(), crate::list::list_interfaces()?);
+
+    Ok(WatchHandle {
+        _hnd: hnd,
+        _state: state,
+    })
 }
 
 #[allow(clippy::extra_unused_type_parameters)]
@@ -146,7 +133,7 @@ pub(crate) fn watch_interfaces_async<A: crate::async_adapter::AsyncFdAdapter>(
 ) -> Result<AsyncWatch, Error> {
     let (hnd, queue, state) = register_queued_watcher()?;
     Ok(AsyncWatch {
-        hnd,
+        _hnd: hnd,
         queue,
         cursor: crate::UpdateCursor::default(),
         _state: state,
@@ -156,7 +143,7 @@ pub(crate) fn watch_interfaces_async<A: crate::async_adapter::AsyncFdAdapter>(
 pub(crate) fn watch_interfaces_blocking() -> Result<BlockingWatch, Error> {
     let (hnd, queue, state) = register_queued_watcher()?;
     Ok(BlockingWatch {
-        hnd,
+        _hnd: hnd,
         queue,
         cursor: crate::UpdateCursor::default(),
         _state: state,
