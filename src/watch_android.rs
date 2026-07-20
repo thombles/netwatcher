@@ -3,6 +3,7 @@ use jni::objects::{Global, JClass, JObject, JString};
 use jni::{jni_sig, jni_str, Env, EnvUnowned, NativeMethod};
 use std::collections::HashMap;
 use std::fs;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -10,6 +11,7 @@ use crate::async_callback::{
     next_async_list, push_async_list, shared_async_callback_queue, wait_next_list,
     SharedAsyncCallbackQueue,
 };
+use crate::callback::{dispatch_callbacks, Callback};
 
 const NETWATCHER_DEX_BYTES: &[u8] = include_bytes!(env!("NETWATCHER_DEX_PATH"));
 
@@ -18,7 +20,7 @@ static STATE: OnceLock<Arc<Mutex<State>>> = OnceLock::new();
 type WatcherId = usize;
 
 struct State {
-    callback_watchers: HashMap<WatcherId, Box<dyn FnMut(Update) + Send + 'static>>,
+    callback_watchers: HashMap<WatcherId, Callback>,
     queued_watchers: HashMap<WatcherId, SharedAsyncCallbackQueue>,
     current_interfaces: List,
     next_watcher_id: WatcherId,
@@ -111,12 +113,13 @@ pub(crate) fn watch_interfaces_blocking() -> Result<BlockingWatch, Error> {
 }
 
 fn register_callback_watcher(
-    mut callback: Box<dyn FnMut(Update) + Send + 'static>,
+    callback: Box<dyn FnMut(Update) + Send + 'static>,
 ) -> Result<WatcherId, Error> {
     let state_ref = STATE.get_or_init(init_state).clone();
+    let mut callback = Callback::new(callback);
 
     let current_list = list::list_interfaces()?;
-    callback(current_list.initial_update());
+    callback.call_initial(current_list.initial_update());
 
     let mut state = state_ref.lock().unwrap();
     let id = state.next_watcher_id;
@@ -292,6 +295,10 @@ pub extern "system" fn Java_net_octet_1stream_netwatcher_NetwatcherSupportAndroi
     _env: EnvUnowned<'_>,
     _class: JClass<'_>,
 ) {
+    let _ = catch_unwind(AssertUnwindSafe(interfaces_did_change));
+}
+
+fn interfaces_did_change() {
     let Some(state_ref) = STATE.get() else {
         return;
     };
@@ -308,15 +315,7 @@ pub extern "system" fn Java_net_octet_1stream_netwatcher_NetwatcherSupportAndroi
     state.current_interfaces = new_list;
 
     if let Some(update) = update {
-        let mut callbacks = state.callback_watchers.values_mut().peekable();
-        while let Some(callback) = callbacks.next() {
-            if callbacks.peek().is_some() {
-                callback(update.clone());
-            } else {
-                callback(update);
-                break;
-            }
-        }
+        dispatch_callbacks(state.callback_watchers.values_mut(), update);
     }
     for queue in state.queued_watchers.values() {
         push_async_list(queue, state.current_interfaces.clone());
