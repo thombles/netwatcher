@@ -57,6 +57,7 @@ pub(crate) struct WatchHandle {
 struct QueuedWatchState {
     current_list: List,
     queue: SharedAsyncCallbackQueue,
+    initialising: bool,
 }
 
 type QueuedWatchRegistration = (
@@ -157,12 +158,11 @@ pub(crate) fn watch_interfaces_blocking() -> Result<BlockingWatch, Error> {
 }
 
 fn register_queued_watcher() -> Result<QueuedWatchRegistration, Error> {
-    let current_list = crate::list::list_interfaces()?;
     let queue = shared_async_callback_queue();
-    push_async_list(&queue, current_list.clone());
     let state = Box::pin(Mutex::new(QueuedWatchState {
-        current_list,
+        current_list: List::default(),
         queue: queue.clone(),
+        initialising: true,
     }));
     let state_ctx = &*state.as_ref() as *const _ as *const c_void;
 
@@ -176,13 +176,20 @@ fn register_queued_watcher() -> Result<QueuedWatchRegistration, Error> {
             &mut hnd,
         )
     };
-    match res {
-        NO_ERROR => Ok((NotificationHandle(hnd), queue, state)),
-        ERROR_INVALID_HANDLE => Err(Error::InvalidHandle),
-        ERROR_INVALID_PARAMETER => Err(Error::InvalidParameter),
-        ERROR_NOT_ENOUGH_MEMORY => Err(Error::NotEnoughMemory),
-        _ => Err(Error::UnexpectedWindowsResult(res.0)),
-    }
+    let hnd = match res {
+        NO_ERROR => NotificationHandle(hnd),
+        ERROR_INVALID_HANDLE => return Err(Error::InvalidHandle),
+        ERROR_INVALID_PARAMETER => return Err(Error::InvalidParameter),
+        ERROR_NOT_ENOUGH_MEMORY => return Err(Error::NotEnoughMemory),
+        _ => return Err(Error::UnexpectedWindowsResult(res.0)),
+    };
+
+    let mut state_guard = state.lock().unwrap();
+    let initial_list = crate::list::list_interfaces()?;
+    handle_initial_queued_notif(&mut state_guard, initial_list);
+    drop(state_guard);
+
+    Ok((hnd, queue, state))
 }
 
 unsafe extern "system" fn notif(
@@ -243,11 +250,20 @@ fn handle_notif(state: &mut WatchState, new_list: List) {
 }
 
 fn handle_queued_notif(state: &mut QueuedWatchState, new_list: List) {
+    if state.initialising {
+        return;
+    }
     if new_list == state.current_list {
         return;
     }
     state.current_list = new_list.clone();
     push_async_list(&state.queue, new_list);
+}
+
+fn handle_initial_queued_notif(state: &mut QueuedWatchState, new_list: List) {
+    state.current_list = new_list.clone();
+    push_async_list(&state.queue, new_list);
+    state.initialising = false;
 }
 
 #[cfg(test)]
