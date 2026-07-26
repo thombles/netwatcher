@@ -13,6 +13,10 @@ use std::time::Duration;
 #[cfg(any(windows, all(unix, not(target_os = "android"))))]
 mod helpers;
 
+#[cfg(windows)]
+#[path = "helpers/windows_interface.rs"]
+mod windows_interface;
+
 #[cfg(any(windows, all(unix, not(target_os = "android"))))]
 fn setup_callback_handler() -> (
     impl Fn(usize) + 'static,
@@ -74,6 +78,24 @@ fn assert_is_initial(updates: &Arc<Mutex<Vec<Update>>>, update_index: usize, exp
     assert_eq!(updates_guard[update_index].is_initial, expected);
 }
 
+#[cfg(windows)]
+fn wait_for_matching_update(
+    receiver: &std::sync::mpsc::Receiver<Update>,
+    description: &str,
+    matches: impl Fn(&Update) -> bool,
+) -> Update {
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        let update = receiver
+            .recv_timeout(remaining)
+            .unwrap_or_else(|_| panic!("timeout waiting for {description}"));
+        if matches(&update) {
+            return update;
+        }
+    }
+}
+
 #[test]
 fn test_list_interfaces_has_loopback() {
     let interfaces = list_interfaces().expect("failed to list network interfaces");
@@ -88,6 +110,126 @@ fn test_list_interfaces_has_loopback() {
         .any(|interface| interface.ips.contains(&expected_loopback));
 
     assert!(loopback_found, "address 127.0.0.1/8 not found");
+}
+
+#[test]
+#[ignore] // installs a temporary network adapter and requires administrator context
+#[cfg(windows)]
+#[serial(loopback)]
+fn test_watch_interfaces_interface_added_and_removed() {
+    use windows_interface::TestInterface;
+
+    let test_interface = TestInterface::install_disabled();
+    let interface_name = test_interface.name().to_owned();
+    let mut blocking_watch =
+        watch_interfaces_blocking().expect("failed to create blocking watcher");
+    let blocking_initial = blocking_watch.changed();
+    assert!(blocking_initial.is_initial);
+    assert!(
+        blocking_initial
+            .interfaces
+            .values()
+            .all(|interface| interface.name != interface_name),
+        "disabled test interface unexpectedly appeared in blocking initial snapshot"
+    );
+    let blocking_interface_name = interface_name.clone();
+    let (blocking_sender, blocking_receiver) = std::sync::mpsc::channel();
+    let blocking_thread = std::thread::spawn(move || {
+        let added = loop {
+            let update = blocking_watch.changed();
+            if update
+                .diff
+                .added
+                .values()
+                .any(|interface| interface.name == blocking_interface_name)
+            {
+                break update;
+            }
+        };
+        let interface_index = added
+            .diff
+            .added
+            .values()
+            .find(|interface| interface.name == blocking_interface_name)
+            .expect("matching blocking added interface should exist")
+            .index;
+        if blocking_sender.send(added).is_err() {
+            return;
+        }
+
+        let removed = loop {
+            let update = blocking_watch.changed();
+            if update.diff.removed.contains_key(&interface_index) {
+                break update;
+            }
+        };
+        let _ = blocking_sender.send(removed);
+    });
+
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let handle = watch_interfaces_with_callback(move |update| {
+        let _ = sender.send(update);
+    })
+    .expect("failed to create callback watcher");
+
+    let initial = receiver
+        .recv_timeout(Duration::from_secs(10))
+        .expect("timeout waiting for initial update");
+    assert!(initial.is_initial);
+    assert!(
+        initial
+            .interfaces
+            .values()
+            .all(|interface| interface.name != interface_name),
+        "disabled test interface unexpectedly appeared in initial snapshot"
+    );
+
+    test_interface.enable();
+    let added = wait_for_matching_update(&receiver, "test interface to be added", |update| {
+        update
+            .diff
+            .added
+            .values()
+            .any(|interface| interface.name == interface_name)
+    });
+    let added_interface = added
+        .diff
+        .added
+        .values()
+        .find(|interface| interface.name == interface_name)
+        .expect("matching added interface should exist");
+    assert!(
+        added_interface.ips.is_empty(),
+        "test interface unexpectedly acquired an address: {:?}",
+        added_interface.ips
+    );
+    let interface_index = added_interface.index;
+    let blocking_added = blocking_receiver
+        .recv_timeout(Duration::from_secs(10))
+        .expect("timeout waiting for blocking test interface addition");
+    assert!(
+        blocking_added.diff.added[&interface_index].ips.is_empty(),
+        "blocking test interface unexpectedly acquired an address: {:?}",
+        blocking_added.diff.added[&interface_index].ips
+    );
+
+    test_interface.disable();
+    let removed = wait_for_matching_update(&receiver, "test interface to be removed", |update| {
+        update.diff.removed.contains_key(&interface_index)
+    });
+    assert_eq!(removed.diff.removed[&interface_index].name, interface_name);
+    let blocking_removed = blocking_receiver
+        .recv_timeout(Duration::from_secs(10))
+        .expect("timeout waiting for blocking test interface removal");
+    assert_eq!(
+        blocking_removed.diff.removed[&interface_index].name,
+        interface_name
+    );
+
+    drop(handle);
+    blocking_thread
+        .join()
+        .expect("blocking watcher thread should not panic");
 }
 
 #[test]
