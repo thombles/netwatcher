@@ -7,13 +7,16 @@ use windows::Win32::Foundation::ERROR_INVALID_HANDLE;
 use windows::Win32::Foundation::ERROR_INVALID_PARAMETER;
 use windows::Win32::Foundation::ERROR_NOT_ENOUGH_MEMORY;
 use windows::Win32::Foundation::NO_ERROR;
+use windows::Win32::Foundation::WIN32_ERROR;
 use windows::Win32::NetworkManagement::IpHelper::CancelMibChangeNotify2;
+use windows::Win32::NetworkManagement::IpHelper::MIB_IPINTERFACE_ROW;
 use windows::Win32::NetworkManagement::IpHelper::MIB_NOTIFICATION_TYPE;
 use windows::Win32::NetworkManagement::IpHelper::MIB_UNICASTIPADDRESS_ROW;
-use windows::Win32::{
-    Foundation::HANDLE, NetworkManagement::IpHelper::NotifyUnicastIpAddressChange,
-    Networking::WinSock::AF_UNSPEC,
+use windows::Win32::NetworkManagement::IpHelper::{
+    NotifyIpInterfaceChange, NotifyUnicastIpAddressChange, PIPINTERFACE_CHANGE_CALLBACK,
+    PUNICAST_IPADDRESS_CHANGE_CALLBACK,
 };
+use windows::Win32::{Foundation::HANDLE, Networking::WinSock::AF_UNSPEC};
 
 use crate::async_callback::{
     next_async_list, push_async_list, shared_async_callback_queue, wait_next_list,
@@ -25,6 +28,11 @@ use crate::List;
 use crate::Update;
 
 struct NotificationHandle(HANDLE);
+
+struct NotificationHandles {
+    _unicast: NotificationHandle,
+    _interface: NotificationHandle,
+}
 
 // SAFETY: The cancellation is intended to be used from another thread.
 unsafe impl Send for NotificationHandle {}
@@ -50,7 +58,7 @@ struct WatchState {
 }
 
 pub(crate) struct WatchHandle {
-    _hnd: NotificationHandle,
+    _hnds: NotificationHandles,
     _state: Pin<Box<Mutex<WatchState>>>,
 }
 
@@ -61,20 +69,20 @@ struct QueuedWatchState {
 }
 
 type QueuedWatchRegistration = (
-    NotificationHandle,
+    NotificationHandles,
     SharedAsyncCallbackQueue,
     Pin<Box<Mutex<QueuedWatchState>>>,
 );
 
 pub(crate) struct AsyncWatch {
-    _hnd: NotificationHandle,
+    _hnds: NotificationHandles,
     queue: SharedAsyncCallbackQueue,
     cursor: crate::UpdateCursor,
     _state: Pin<Box<Mutex<QueuedWatchState>>>,
 }
 
 pub(crate) struct BlockingWatch {
-    _hnd: NotificationHandle,
+    _hnds: NotificationHandles,
     queue: SharedAsyncCallbackQueue,
     cursor: crate::UpdateCursor,
     _state: Pin<Box<Mutex<QueuedWatchState>>>,
@@ -111,18 +119,7 @@ pub(crate) fn watch_interfaces_with_callback<F: FnMut(Update) + Send + 'static>(
         initialising: true,
     }));
     let state_ctx = &*state.as_ref() as *const _ as *const c_void;
-
-    let mut hnd = HANDLE::default();
-    let res = unsafe {
-        NotifyUnicastIpAddressChange(AF_UNSPEC, Some(notif), Some(state_ctx), false, &mut hnd)
-    };
-    let hnd = match res {
-        NO_ERROR => NotificationHandle(hnd),
-        ERROR_INVALID_HANDLE => return Err(Error::InvalidHandle),
-        ERROR_INVALID_PARAMETER => return Err(Error::InvalidParameter),
-        ERROR_NOT_ENOUGH_MEMORY => return Err(Error::NotEnoughMemory),
-        _ => return Err(Error::UnexpectedWindowsResult(res.0)),
-    };
+    let hnds = register_notifications(state_ctx, Some(unicast_notif), Some(interface_notif))?;
 
     let mut state_guard = state.lock().unwrap();
     let initial_list = crate::list::list_interfaces()?;
@@ -130,7 +127,7 @@ pub(crate) fn watch_interfaces_with_callback<F: FnMut(Update) + Send + 'static>(
     drop(state_guard);
 
     Ok(WatchHandle {
-        _hnd: hnd,
+        _hnds: hnds,
         _state: state,
     })
 }
@@ -138,9 +135,9 @@ pub(crate) fn watch_interfaces_with_callback<F: FnMut(Update) + Send + 'static>(
 #[allow(clippy::extra_unused_type_parameters)]
 pub(crate) fn watch_interfaces_async<A: crate::async_adapter::AsyncFdAdapter>(
 ) -> Result<AsyncWatch, Error> {
-    let (hnd, queue, state) = register_queued_watcher()?;
+    let (hnds, queue, state) = register_queued_watcher()?;
     Ok(AsyncWatch {
-        _hnd: hnd,
+        _hnds: hnds,
         queue,
         cursor: crate::UpdateCursor::default(),
         _state: state,
@@ -148,9 +145,9 @@ pub(crate) fn watch_interfaces_async<A: crate::async_adapter::AsyncFdAdapter>(
 }
 
 pub(crate) fn watch_interfaces_blocking() -> Result<BlockingWatch, Error> {
-    let (hnd, queue, state) = register_queued_watcher()?;
+    let (hnds, queue, state) = register_queued_watcher()?;
     Ok(BlockingWatch {
-        _hnd: hnd,
+        _hnds: hnds,
         queue,
         cursor: crate::UpdateCursor::default(),
         _state: state,
@@ -165,38 +162,82 @@ fn register_queued_watcher() -> Result<QueuedWatchRegistration, Error> {
         initialising: true,
     }));
     let state_ctx = &*state.as_ref() as *const _ as *const c_void;
-
-    let mut hnd = HANDLE::default();
-    let res = unsafe {
-        NotifyUnicastIpAddressChange(
-            AF_UNSPEC,
-            Some(queued_notif),
-            Some(state_ctx),
-            false,
-            &mut hnd,
-        )
-    };
-    let hnd = match res {
-        NO_ERROR => NotificationHandle(hnd),
-        ERROR_INVALID_HANDLE => return Err(Error::InvalidHandle),
-        ERROR_INVALID_PARAMETER => return Err(Error::InvalidParameter),
-        ERROR_NOT_ENOUGH_MEMORY => return Err(Error::NotEnoughMemory),
-        _ => return Err(Error::UnexpectedWindowsResult(res.0)),
-    };
+    let hnds = register_notifications(
+        state_ctx,
+        Some(queued_unicast_notif),
+        Some(queued_interface_notif),
+    )?;
 
     let mut state_guard = state.lock().unwrap();
     let initial_list = crate::list::list_interfaces()?;
     handle_initial_queued_notif(&mut state_guard, initial_list);
     drop(state_guard);
 
-    Ok((hnd, queue, state))
+    Ok((hnds, queue, state))
 }
 
-unsafe extern "system" fn notif(
+fn register_notifications(
+    state_ctx: *const c_void,
+    unicast_callback: PUNICAST_IPADDRESS_CHANGE_CALLBACK,
+    interface_callback: PIPINTERFACE_CHANGE_CALLBACK,
+) -> Result<NotificationHandles, Error> {
+    let mut unicast_hnd = HANDLE::default();
+    let res = unsafe {
+        NotifyUnicastIpAddressChange(
+            AF_UNSPEC,
+            unicast_callback,
+            Some(state_ctx),
+            false,
+            &mut unicast_hnd,
+        )
+    };
+    let unicast = registration_result(res, unicast_hnd)?;
+
+    let mut interface_hnd = HANDLE::default();
+    let res = unsafe {
+        NotifyIpInterfaceChange(
+            AF_UNSPEC,
+            interface_callback,
+            Some(state_ctx),
+            false,
+            &mut interface_hnd,
+        )
+    };
+    let interface = registration_result(res, interface_hnd)?;
+
+    Ok(NotificationHandles {
+        _unicast: unicast,
+        _interface: interface,
+    })
+}
+
+fn registration_result(result: WIN32_ERROR, handle: HANDLE) -> Result<NotificationHandle, Error> {
+    match result {
+        NO_ERROR => Ok(NotificationHandle(handle)),
+        ERROR_INVALID_HANDLE => Err(Error::InvalidHandle),
+        ERROR_INVALID_PARAMETER => Err(Error::InvalidParameter),
+        ERROR_NOT_ENOUGH_MEMORY => Err(Error::NotEnoughMemory),
+        _ => Err(Error::UnexpectedWindowsResult(result.0)),
+    }
+}
+
+unsafe extern "system" fn unicast_notif(
     ctx: *const c_void,
     _row: *const MIB_UNICASTIPADDRESS_ROW,
     _notification_type: MIB_NOTIFICATION_TYPE,
 ) {
+    dispatch_notif(ctx);
+}
+
+unsafe extern "system" fn interface_notif(
+    ctx: *const c_void,
+    _row: *const MIB_IPINTERFACE_ROW,
+    _notification_type: MIB_NOTIFICATION_TYPE,
+) {
+    dispatch_notif(ctx);
+}
+
+fn dispatch_notif(ctx: *const c_void) {
     let _ = catch_unwind(AssertUnwindSafe(|| unsafe {
         let state_ptr = ctx as *const Mutex<WatchState>;
         let state_guard = &mut *state_ptr
@@ -211,11 +252,23 @@ unsafe extern "system" fn notif(
     }));
 }
 
-unsafe extern "system" fn queued_notif(
+unsafe extern "system" fn queued_unicast_notif(
     ctx: *const c_void,
     _row: *const MIB_UNICASTIPADDRESS_ROW,
     _notification_type: MIB_NOTIFICATION_TYPE,
 ) {
+    dispatch_queued_notif(ctx);
+}
+
+unsafe extern "system" fn queued_interface_notif(
+    ctx: *const c_void,
+    _row: *const MIB_IPINTERFACE_ROW,
+    _notification_type: MIB_NOTIFICATION_TYPE,
+) {
+    dispatch_queued_notif(ctx);
+}
+
+fn dispatch_queued_notif(ctx: *const c_void) {
     let _ = catch_unwind(AssertUnwindSafe(|| unsafe {
         let state_ptr = ctx as *const Mutex<QueuedWatchState>;
         let state_guard = &mut *state_ptr
