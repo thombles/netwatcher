@@ -25,6 +25,7 @@ pub(crate) struct AsyncWatch {
     cursor: crate::UpdateCursor,
     initial_update: Option<Update>,
     drain_event_socket: DrainEventSocket,
+    readiness_failed: bool,
 }
 
 pub(crate) struct BlockingWatch {
@@ -40,10 +41,17 @@ impl AsyncWatch {
             return initial_update;
         }
 
+        if self.readiness_failed {
+            return std::future::pending().await;
+        }
+
         loop {
             let mut ready = match self.registration.readable().await {
                 Ok(ready) => ready,
-                Err(_) => continue,
+                Err(_) => {
+                    self.readiness_failed = true;
+                    return std::future::pending().await;
+                }
             };
 
             (self.drain_event_socket)(ready.fd().as_fd());
@@ -110,6 +118,7 @@ pub(crate) fn watch_interfaces_async<A: crate::async_adapter::AsyncFdAdapter>(
         cursor,
         initial_update,
         drain_event_socket: ops.drain,
+        readiness_failed: false,
     })
 }
 
