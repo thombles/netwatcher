@@ -435,12 +435,13 @@ pub fn list_interfaces() -> Result<HashMap<IfIndex, Interface>, Error> {
 /// The callback will fire once immediately with an initial interface list, and a diff as if
 /// there were originally no interfaces present.
 ///
-/// The initial callback is invoked synchronously before this function returns. If it panics,
-/// watcher construction unwinds and no watcher remains registered. Later callbacks execute from
-/// platform notification context. With the default unwinding panic strategy, a later callback
-/// panic is contained and permanently disables that callback watcher without affecting other
-/// watchers. The panic hook still runs, and the returned handle remains safe to drop. With
-/// `panic = "abort"`, any panic still aborts the process.
+/// The initial callback and any catch-up callbacks for notifications racing initialisation are
+/// invoked synchronously before this function returns. Callbacks after initialisation execute from
+/// platform notification context. If the initial callback panics, watcher construction unwinds and
+/// no watcher remains registered. With the default unwinding panic strategy, a later callback panic
+/// is contained and permanently disables that callback watcher without affecting other watchers.
+/// The panic hook still runs, and the returned handle remains safe to drop. With `panic = "abort"`,
+/// any panic still aborts the process.
 ///
 /// This function will return an error if there is a problem configuring the watcher, or if there
 /// is an error retrieving the initial interface list.
