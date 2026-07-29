@@ -1,7 +1,7 @@
 use crate::{list, Error, List, Update};
 use jni::objects::{Global, JClass, JObject, JString};
 use jni::{jni_sig, jni_str, Env, EnvUnowned, NativeMethod};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
@@ -21,10 +21,45 @@ type WatcherId = usize;
 
 struct State {
     callback_watchers: HashMap<WatcherId, Callback>,
+    initialising_callback_watchers: HashSet<WatcherId>,
     queued_watchers: HashMap<WatcherId, SharedAsyncCallbackQueue>,
     current_interfaces: List,
     next_watcher_id: WatcherId,
     java_support: Option<Global<JObject<'static>>>,
+}
+
+impl State {
+    fn has_watchers(&self) -> bool {
+        !self.callback_watchers.is_empty()
+            || !self.initialising_callback_watchers.is_empty()
+            || !self.queued_watchers.is_empty()
+    }
+}
+
+struct InitialisingCallbackWatcher {
+    id: WatcherId,
+    committed: bool,
+}
+
+impl InitialisingCallbackWatcher {
+    fn new(id: WatcherId) -> Self {
+        Self {
+            id,
+            committed: false,
+        }
+    }
+
+    fn commit(&mut self) {
+        self.committed = true;
+    }
+}
+
+impl Drop for InitialisingCallbackWatcher {
+    fn drop(&mut self) {
+        if !self.committed {
+            unregister_watcher(self.id);
+        }
+    }
 }
 
 pub(crate) struct WatchHandle {
@@ -118,34 +153,52 @@ fn register_callback_watcher(
     let state_ref = STATE.get_or_init(init_state).clone();
     let mut callback = Callback::new(callback);
 
-    let current_list = list::list_interfaces()?;
-    callback.call_initial(current_list.initial_update());
+    let (id, initial_list) = {
+        let mut state = state_ref.lock().unwrap();
+        initialise_java_watching(&mut state)?;
+        let id = state.next_watcher_id;
+        state.next_watcher_id += 1;
+        state.initialising_callback_watchers.insert(id);
+        (id, state.current_interfaces.clone())
+    };
+    let mut registration = InitialisingCallbackWatcher::new(id);
 
-    let mut state = state_ref.lock().unwrap();
-    let id = state.next_watcher_id;
-    let is_first_watcher = state.callback_watchers.is_empty() && state.queued_watchers.is_empty();
-    if is_first_watcher {
-        start_java_watching(&mut state)?;
-    }
-    state.next_watcher_id += 1;
-    state.current_interfaces = current_list;
-    state.callback_watchers.insert(id, callback);
+    callback.call_initial(initial_list.initial_update());
+    finish_callback_registration(&state_ref, id, initial_list, callback);
+    registration.commit();
     Ok(id)
+}
+
+fn finish_callback_registration(
+    state_ref: &Arc<Mutex<State>>,
+    id: WatcherId,
+    mut current_list: List,
+    mut callback: Callback,
+) {
+    loop {
+        let next_list = {
+            let mut state = state_ref.lock().unwrap();
+            if state.current_interfaces == current_list {
+                state.initialising_callback_watchers.remove(&id);
+                state.callback_watchers.insert(id, callback);
+                return;
+            }
+            state.current_interfaces.clone()
+        };
+
+        let update = next_list.update_from(&current_list);
+        current_list = next_list;
+        callback.call_from_notification(update);
+    }
 }
 
 fn register_queued_watcher(queue: SharedAsyncCallbackQueue) -> Result<WatcherId, Error> {
     let state_ref = STATE.get_or_init(init_state).clone();
-    let current_list = list::list_interfaces()?;
-    push_async_list(&queue, current_list.clone());
-
     let mut state = state_ref.lock().unwrap();
+    initialise_java_watching(&mut state)?;
     let id = state.next_watcher_id;
-    let is_first_watcher = state.callback_watchers.is_empty() && state.queued_watchers.is_empty();
-    if is_first_watcher {
-        start_java_watching(&mut state)?;
-    }
     state.next_watcher_id += 1;
-    state.current_interfaces = current_list;
+    push_async_list(&queue, state.current_interfaces.clone());
     state.queued_watchers.insert(id, queue);
     Ok(id)
 }
@@ -157,9 +210,10 @@ fn unregister_watcher(id: WatcherId) {
 
     let mut state = state_ref.lock().unwrap();
     state.callback_watchers.remove(&id);
+    state.initialising_callback_watchers.remove(&id);
     state.queued_watchers.remove(&id);
 
-    if state.callback_watchers.is_empty() && state.queued_watchers.is_empty() {
+    if !state.has_watchers() {
         if let Some(ref support_object) = state.java_support {
             let _ = stop_java_watching(support_object);
         }
@@ -170,11 +224,35 @@ fn unregister_watcher(id: WatcherId) {
 fn init_state() -> Arc<Mutex<State>> {
     Arc::new(Mutex::new(State {
         callback_watchers: HashMap::new(),
+        initialising_callback_watchers: HashSet::new(),
         queued_watchers: HashMap::new(),
         current_interfaces: List::default(),
         next_watcher_id: 1,
         java_support: None,
     }))
+}
+
+fn initialise_java_watching(state: &mut State) -> Result<(), Error> {
+    if state.has_watchers() {
+        return Ok(());
+    }
+
+    // Subscribe before taking the initial snapshot. Notification dispatch takes the same state
+    // lock, so a racing notification is applied after the initial watcher has been registered.
+    start_java_watching(state)?;
+    match list::list_interfaces() {
+        Ok(current_interfaces) => {
+            state.current_interfaces = current_interfaces;
+            Ok(())
+        }
+        Err(err) => {
+            if let Some(ref support_object) = state.java_support {
+                let _ = stop_java_watching(support_object);
+            }
+            state.java_support = None;
+            Err(err)
+        }
+    }
 }
 
 fn start_java_watching(state: &mut State) -> Result<(), Error> {
@@ -302,10 +380,13 @@ fn interfaces_did_change() {
     let Some(state_ref) = STATE.get() else {
         return;
     };
+    let mut state = state_ref.lock().unwrap();
+    if !state.has_watchers() {
+        return;
+    }
     let Ok(new_list) = list::list_interfaces() else {
         return;
     };
-    let mut state = state_ref.lock().unwrap();
     if new_list == state.current_interfaces {
         return;
     }
