@@ -149,7 +149,7 @@ pub use error::Error;
 pub use android::set_android_context;
 
 /// An IP address paired with its prefix length (network mask).
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct IpRecord {
     pub ip: IpAddr,
     pub prefix_len: u8,
@@ -183,6 +183,19 @@ impl Interface {
             IpAddr::V4(_) => None,
             IpAddr::V6(ref v6) => Some(v6),
         })
+    }
+
+    /// Canonicalise the address list so that vector equality is equivalent to
+    /// set equality.
+    ///
+    /// Addresses are sorted and duplicates are removed. This makes `Interface`
+    /// (and `List`) equality insensitive to the order in which a platform
+    /// returns addresses, so that a reordering of otherwise identical addresses
+    /// does not produce a spurious "modified" update. It also collapses
+    /// duplicate records into a single canonical entry.
+    fn normalise(&mut self) {
+        self.ips.sort();
+        self.ips.dedup();
     }
 }
 
@@ -486,12 +499,14 @@ mod tests {
         hw_addr: &str,
         ips: impl IntoIterator<Item = IpRecord>,
     ) -> Interface {
-        Interface {
+        let mut interface = Interface {
             index,
             name: name.into(),
             hw_addr: hw_addr.into(),
             ips: ips.into_iter().collect(),
-        }
+        };
+        interface.normalise();
+        interface
     }
 
     fn list(interfaces: impl IntoIterator<Item = Interface>) -> List {
@@ -611,5 +626,90 @@ mod tests {
         assert_eq!(update.diff, UpdateDiff::default());
         assert_eq!(update.addrs_added().next(), None);
         assert_eq!(update.addrs_removed().next(), None);
+    }
+
+    #[test]
+    fn reordered_addresses_do_not_produce_an_update() {
+        let previous = list([interface(1, "iface", "00:00:00:00:00:01", [ip(2), ip(1)])]);
+        let current = list([interface(1, "iface", "00:00:00:00:00:01", [ip(1), ip(2)])]);
+
+        let update = current.update_from(&previous);
+
+        assert!(update.diff.added.is_empty());
+        assert!(update.diff.removed.is_empty());
+        assert!(update.diff.modified.is_empty());
+        assert_eq!(update.addrs_added().next(), None);
+        assert_eq!(update.addrs_removed().next(), None);
+    }
+
+    #[test]
+    fn duplicate_addresses_are_normalised_and_produce_no_update() {
+        let previous = list([interface(
+            1,
+            "iface",
+            "00:00:00:00:00:01",
+            [ip(1), ip(1), ip(2)],
+        )]);
+        let current = list([interface(1, "iface", "00:00:00:00:00:01", [ip(2), ip(1)])]);
+
+        let update = current.update_from(&previous);
+
+        assert!(update.diff.modified.is_empty());
+        assert_eq!(update.interfaces[&1].ips, vec![ip(1), ip(2)]);
+        assert_eq!(update.addrs_added().next(), None);
+        assert_eq!(update.addrs_removed().next(), None);
+    }
+
+    #[test]
+    fn reordering_alongside_real_changes_still_reports_them() {
+        let previous = list([interface(
+            1,
+            "iface",
+            "00:00:00:00:00:01",
+            [ip(1), ip(2), ip(3)],
+        )]);
+        let current = list([interface(
+            1,
+            "iface",
+            "00:00:00:00:00:01",
+            [ip(3), ip(1), ip(4)],
+        )]);
+
+        let update = current.update_from(&previous);
+
+        assert_eq!(
+            update.diff.modified,
+            HashMap::from([(
+                1,
+                InterfaceDiff {
+                    name_changed: false,
+                    hw_addr_changed: false,
+                    addrs_added: vec![ip(4)],
+                    addrs_removed: vec![ip(2)],
+                }
+            )])
+        );
+        assert_eq!(
+            owned_addresses(update.addrs_added()),
+            HashSet::from([(1, ip(4))])
+        );
+        assert_eq!(
+            owned_addresses(update.addrs_removed()),
+            HashSet::from([(1, ip(2))])
+        );
+    }
+
+    #[test]
+    fn normalise_sorts_and_dedups_ips() {
+        let mut iface = Interface {
+            index: 1,
+            name: "iface".into(),
+            hw_addr: "00:00:00:00:00:01".into(),
+            ips: vec![ip(3), ip(1), ip(3), ip(2), ip(1)],
+        };
+
+        iface.normalise();
+
+        assert_eq!(iface.ips, vec![ip(1), ip(2), ip(3)]);
     }
 }

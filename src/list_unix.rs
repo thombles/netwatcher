@@ -97,15 +97,14 @@ pub(crate) fn list_interfaces() -> Result<List, Error> {
                 .collect();
             // MAC suppressed on Android
             let hw_addr = c.hw_addr.unwrap_or_else(|| "00:00:00:00:00:00".to_string());
-            (
-                c.index,
-                Interface {
-                    index: c.index,
-                    hw_addr,
-                    name: c.name,
-                    ips,
-                },
-            )
+            let mut interface = Interface {
+                index: c.index,
+                hw_addr,
+                name: c.name,
+                ips,
+            };
+            interface.normalise();
+            (c.index, interface)
         })
         .collect();
     Ok(List(ifs))
