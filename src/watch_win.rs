@@ -29,25 +29,93 @@ use crate::Update;
 
 struct NotificationHandle(HANDLE);
 
-struct NotificationHandles {
-    _unicast: NotificationHandle,
-    _interface: NotificationHandle,
-}
-
 // SAFETY: The cancellation is intended to be used from another thread.
 unsafe impl Send for NotificationHandle {}
 
 impl NotificationHandle {
-    fn cancel(&self) {
-        unsafe {
-            let _ = CancelMibChangeNotify2(self.0);
+    fn cancel(&self) -> Result<(), Error> {
+        let result = unsafe { CancelMibChangeNotify2(self.0) };
+        match result {
+            NO_ERROR => Ok(()),
+            _ => Err(Error::UnexpectedWindowsResult(result.0)),
         }
     }
 }
 
-impl Drop for NotificationHandle {
+// Owns the pinned callback state alongside the registered notification handles.
+//
+// The state is only dropped once every registered handle has been successfully
+// cancelled. If any cancellation fails the OS may still retain the registration
+// and invoke the callback later, so the state is deliberately leaked to keep the
+// context pointer valid rather than allowing a use-after-free. The state is
+// disabled first so any surviving callbacks are suppressed instead of running
+// user code on the leaked state.
+struct NotificationRegistration<T: WatchStateLike> {
+    unicast: Option<NotificationHandle>,
+    interface: Option<NotificationHandle>,
+    state: Option<Pin<Box<Mutex<T>>>>,
+}
+
+trait WatchStateLike {
+    fn disable(&mut self);
+}
+
+impl<T: WatchStateLike> NotificationRegistration<T> {
+    fn new(state: Pin<Box<Mutex<T>>>) -> Self {
+        NotificationRegistration {
+            unicast: None,
+            interface: None,
+            state: Some(state),
+        }
+    }
+
+    fn state(&self) -> &Mutex<T> {
+        self.state
+            .as_ref()
+            .expect("state must be present")
+            .as_ref()
+            .get_ref()
+    }
+
+    fn register_unicast(
+        &mut self,
+        callback: PUNICAST_IPADDRESS_CHANGE_CALLBACK,
+    ) -> Result<(), Error> {
+        let ctx = self.state() as *const _ as *const c_void;
+        let mut handle = HANDLE::default();
+        let res = unsafe {
+            NotifyUnicastIpAddressChange(AF_UNSPEC, callback, Some(ctx), false, &mut handle)
+        };
+        self.unicast = Some(registration_result(res, handle)?);
+        Ok(())
+    }
+
+    fn register_interface(&mut self, callback: PIPINTERFACE_CHANGE_CALLBACK) -> Result<(), Error> {
+        let ctx = self.state() as *const _ as *const c_void;
+        let mut handle = HANDLE::default();
+        let res =
+            unsafe { NotifyIpInterfaceChange(AF_UNSPEC, callback, Some(ctx), false, &mut handle) };
+        self.interface = Some(registration_result(res, handle)?);
+        Ok(())
+    }
+}
+
+impl<T: WatchStateLike> Drop for NotificationRegistration<T> {
     fn drop(&mut self) {
-        self.cancel();
+        let unicast_ok = match &self.unicast {
+            Some(h) => h.cancel().is_ok(),
+            None => true,
+        };
+        let interface_ok = match &self.interface {
+            Some(h) => h.cancel().is_ok(),
+            None => true,
+        };
+        if !unicast_ok || !interface_ok {
+            if let Some(state) = self.state.take() {
+                state.as_ref().get_ref().lock().unwrap().disable();
+                std::mem::forget(state);
+            }
+        }
     }
 }
 
@@ -55,37 +123,47 @@ struct WatchState {
     cursor: crate::UpdateCursor,
     callback: Callback,
     initialising: bool,
+    disabled: bool,
+}
+
+impl WatchStateLike for WatchState {
+    fn disable(&mut self) {
+        self.disabled = true;
+    }
 }
 
 pub(crate) struct WatchHandle {
-    _hnds: NotificationHandles,
-    _state: Pin<Box<Mutex<WatchState>>>,
+    _registration: NotificationRegistration<WatchState>,
 }
 
 struct QueuedWatchState {
     current_list: List,
     queue: SharedAsyncCallbackQueue,
     initialising: bool,
+    disabled: bool,
+}
+
+impl WatchStateLike for QueuedWatchState {
+    fn disable(&mut self) {
+        self.disabled = true;
+    }
 }
 
 type QueuedWatchRegistration = (
-    NotificationHandles,
+    NotificationRegistration<QueuedWatchState>,
     SharedAsyncCallbackQueue,
-    Pin<Box<Mutex<QueuedWatchState>>>,
 );
 
 pub(crate) struct AsyncWatch {
-    _hnds: NotificationHandles,
+    _registration: NotificationRegistration<QueuedWatchState>,
     queue: SharedAsyncCallbackQueue,
     cursor: crate::UpdateCursor,
-    _state: Pin<Box<Mutex<QueuedWatchState>>>,
 }
 
 pub(crate) struct BlockingWatch {
-    _hnds: NotificationHandles,
+    _registration: NotificationRegistration<QueuedWatchState>,
     queue: SharedAsyncCallbackQueue,
     cursor: crate::UpdateCursor,
-    _state: Pin<Box<Mutex<QueuedWatchState>>>,
 }
 
 impl AsyncWatch {
@@ -117,40 +195,37 @@ pub(crate) fn watch_interfaces_with_callback<F: FnMut(Update) + Send + 'static>(
         cursor: crate::UpdateCursor::default(),
         callback: Callback::new(Box::new(callback)),
         initialising: true,
+        disabled: false,
     }));
-    let state_ctx = &*state.as_ref() as *const _ as *const c_void;
-    let hnds = register_notifications(state_ctx, Some(unicast_notif), Some(interface_notif))?;
+    let registration = register_notifications(state, Some(unicast_notif), Some(interface_notif))?;
 
-    let mut state_guard = state.lock().unwrap();
+    let mut state_guard = registration.state().lock().unwrap();
     let initial_list = crate::list::list_interfaces()?;
     handle_initial_notif(&mut state_guard, initial_list);
     drop(state_guard);
 
     Ok(WatchHandle {
-        _hnds: hnds,
-        _state: state,
+        _registration: registration,
     })
 }
 
 #[allow(clippy::extra_unused_type_parameters)]
 pub(crate) fn watch_interfaces_async<A: crate::async_adapter::AsyncFdAdapter>(
 ) -> Result<AsyncWatch, Error> {
-    let (hnds, queue, state) = register_queued_watcher()?;
+    let (registration, queue) = register_queued_watcher()?;
     Ok(AsyncWatch {
-        _hnds: hnds,
+        _registration: registration,
         queue,
         cursor: crate::UpdateCursor::default(),
-        _state: state,
     })
 }
 
 pub(crate) fn watch_interfaces_blocking() -> Result<BlockingWatch, Error> {
-    let (hnds, queue, state) = register_queued_watcher()?;
+    let (registration, queue) = register_queued_watcher()?;
     Ok(BlockingWatch {
-        _hnds: hnds,
+        _registration: registration,
         queue,
         cursor: crate::UpdateCursor::default(),
-        _state: state,
     })
 }
 
@@ -160,55 +235,31 @@ fn register_queued_watcher() -> Result<QueuedWatchRegistration, Error> {
         current_list: List::default(),
         queue: queue.clone(),
         initialising: true,
+        disabled: false,
     }));
-    let state_ctx = &*state.as_ref() as *const _ as *const c_void;
-    let hnds = register_notifications(
-        state_ctx,
+    let registration = register_notifications(
+        state,
         Some(queued_unicast_notif),
         Some(queued_interface_notif),
     )?;
 
-    let mut state_guard = state.lock().unwrap();
+    let mut state_guard = registration.state().lock().unwrap();
     let initial_list = crate::list::list_interfaces()?;
     handle_initial_queued_notif(&mut state_guard, initial_list);
     drop(state_guard);
 
-    Ok((hnds, queue, state))
+    Ok((registration, queue))
 }
 
-fn register_notifications(
-    state_ctx: *const c_void,
+fn register_notifications<T: WatchStateLike>(
+    state: Pin<Box<Mutex<T>>>,
     unicast_callback: PUNICAST_IPADDRESS_CHANGE_CALLBACK,
     interface_callback: PIPINTERFACE_CHANGE_CALLBACK,
-) -> Result<NotificationHandles, Error> {
-    let mut unicast_hnd = HANDLE::default();
-    let res = unsafe {
-        NotifyUnicastIpAddressChange(
-            AF_UNSPEC,
-            unicast_callback,
-            Some(state_ctx),
-            false,
-            &mut unicast_hnd,
-        )
-    };
-    let unicast = registration_result(res, unicast_hnd)?;
-
-    let mut interface_hnd = HANDLE::default();
-    let res = unsafe {
-        NotifyIpInterfaceChange(
-            AF_UNSPEC,
-            interface_callback,
-            Some(state_ctx),
-            false,
-            &mut interface_hnd,
-        )
-    };
-    let interface = registration_result(res, interface_hnd)?;
-
-    Ok(NotificationHandles {
-        _unicast: unicast,
-        _interface: interface,
-    })
+) -> Result<NotificationRegistration<T>, Error> {
+    let mut registration = NotificationRegistration::new(state);
+    registration.register_unicast(unicast_callback)?;
+    registration.register_interface(interface_callback)?;
+    Ok(registration)
 }
 
 fn registration_result(result: WIN32_ERROR, handle: HANDLE) -> Result<NotificationHandle, Error> {
@@ -293,7 +344,7 @@ fn handle_initial_notif(state: &mut WatchState, new_list: List) {
 }
 
 fn handle_notif(state: &mut WatchState, new_list: List) {
-    if state.initialising {
+    if state.initialising || state.disabled {
         return;
     }
     let Some(update) = state.cursor.advance(new_list) else {
@@ -303,7 +354,7 @@ fn handle_notif(state: &mut WatchState, new_list: List) {
 }
 
 fn handle_queued_notif(state: &mut QueuedWatchState, new_list: List) {
-    if state.initialising {
+    if state.initialising || state.disabled {
         return;
     }
     if new_list == state.current_list {
@@ -355,6 +406,7 @@ mod tests {
                 }
             })),
             initialising: true,
+            disabled: false,
         });
 
         handle_notif(&mut state.lock().unwrap(), list("before initialisation"));
