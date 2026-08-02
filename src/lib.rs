@@ -89,6 +89,8 @@
 //! to use the provided adapter.
 //!
 //! ```no_run
+//! # #[cfg(feature = "tokio")]
+//! # {
 //! use netwatcher::async_adapter::Tokio;
 //!
 //! let runtime = tokio::runtime::Builder::new_current_thread()
@@ -105,6 +107,7 @@
 //!         println!("Current interface map: {:#?}", update.interfaces);
 //!     }
 //! });
+//! # }
 //! ```
 
 use std::{
