@@ -103,12 +103,13 @@ pub(crate) fn list_interfaces() -> Result<List, Error> {
                 .FriendlyName
                 .to_string()
                 .unwrap_or_else(|_| "".to_owned());
-            let iface = Interface {
+            let mut iface = Interface {
                 index: ifindex,
                 name,
                 hw_addr,
                 ips,
             };
+            iface.normalise();
             ifs.insert(ifindex, iface);
             adapter_ptr = adapter.Next;
         }
