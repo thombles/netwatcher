@@ -31,13 +31,13 @@ async-io = { version = "2", optional = true }
 ndk-context = "0.1.1"
 jni = "0.22.1"
 
-[target.'cfg(windows)'.dependencies.windows]
-version = "0.62.2"
-features = [
+[target.'cfg(windows)'.dependencies]
+aligned-vec = "0.6"
+windows = { version = "0.62.2", features = [
     "Win32_NetworkManagement_IpHelper",
     "Win32_NetworkManagement_Ndis",
     "Win32_Networking_WinSock",
-]
+] }
 
 [target.'cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))'.build-dependencies]
 android-build = "0.1.4"
