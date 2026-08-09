@@ -17,17 +17,25 @@ use windows::Win32::Networking::WinSock::{
 };
 
 use crate::{Error, Interface, IpRecord, List};
+use aligned_vec::{AVec, ConstAlign};
 
 pub(crate) fn list_interfaces() -> Result<List, Error> {
     let mut ifs = HashMap::new();
     // Microsoft recommends a 15 KB initial buffer
     let start_size = 15 * 1024;
-    let mut buf: Vec<u8> = vec![0; start_size];
+    // GetAdaptersAddresses fills this buffer with IP_ADAPTER_ADDRESSES_LH structs, so it must
+    // meet that type's alignment. Unlike Vec<u8>, AVec guarantees the requested alignment
+    // regardless of the global allocator.
+    let mut buf: AVec<u8, ConstAlign<8>> = AVec::new(8);
+    buf.resize(start_size, 0);
     let mut sizepointer: u32 = start_size as u32;
 
     unsafe {
         loop {
-            let bufptr = &mut buf[0] as *mut _ as *mut IP_ADAPTER_ADDRESSES_LH;
+            debug_assert!(
+                (buf.as_ptr() as usize).is_multiple_of(align_of::<IP_ADAPTER_ADDRESSES_LH>())
+            );
+            let bufptr = buf.as_mut_ptr() as *mut IP_ADAPTER_ADDRESSES_LH;
             let res = GetAdaptersAddresses(
                 AF_UNSPEC.0.into(),
                 GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST,
@@ -50,7 +58,7 @@ pub(crate) fn list_interfaces() -> Result<List, Error> {
         }
 
         // We have at least one
-        let mut adapter_ptr = &buf[0] as *const _ as *const IP_ADAPTER_ADDRESSES_LH;
+        let mut adapter_ptr = buf.as_ptr() as *const IP_ADAPTER_ADDRESSES_LH;
         while !adapter_ptr.is_null() {
             let adapter = &*adapter_ptr as &IP_ADAPTER_ADDRESSES_LH;
             if adapter.OperStatus == IfOperStatusDown {
@@ -116,4 +124,22 @@ pub(crate) fn list_interfaces() -> Result<List, Error> {
     }
 
     Ok(List(ifs))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The buffer handed to GetAdaptersAddresses is reinterpreted as IP_ADAPTER_ADDRESSES_LH,
+    // so its alignment must survive both the initial allocation and the growth that follows
+    // ERROR_BUFFER_OVERFLOW. An odd size models the byte counts the API actually reports.
+    #[test]
+    fn adapter_buffer_stays_aligned_across_growth() {
+        let mut buf: AVec<u8, ConstAlign<8>> = AVec::new(8);
+        buf.resize(15 * 1024, 0);
+        assert!((buf.as_ptr() as usize).is_multiple_of(align_of::<IP_ADAPTER_ADDRESSES_LH>()));
+
+        buf.resize(16 * 1024 + 383, 0);
+        assert!((buf.as_ptr() as usize).is_multiple_of(align_of::<IP_ADAPTER_ADDRESSES_LH>()));
+    }
 }
