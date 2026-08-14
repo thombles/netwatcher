@@ -16,7 +16,7 @@ Sync and async APIs are available, with no extra dependencies for sync users. If
 | Linux    | -           | ✅    | ✅     | Callback watch creates background thread. |
 | iOS      | -           | ✅    | ✅     | Callback watch creates background thread. |
 | Android  | 5.0         | ✅    | ✅     | Watch requires extra setup. See Android Setup instructions below. |
-| BSD  | - | ✅ | ✅ | FreeBSD 15.0 is tested in CI. |
+| BSD  | - | ✅ | ✅ | FreeBSD 15.0 is tested in CI. Callback watch creates background thread. |
 
 ## Usage
 
