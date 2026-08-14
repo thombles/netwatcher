@@ -105,24 +105,24 @@ fn android_list_and_watch_apis() {
         &mut pending_events,
         EventKind::Watch,
         60,
-        "WATCH_IPS after enabling Wi-Fi",
-        |body| body.contains("wlan0:"),
+        "WATCH_IPS after enabling Wi-Fi with IPv6",
+        |body| body.contains("wlan0:fe80::"),
     );
     expect_event(
         &rx,
         &mut pending_events,
         EventKind::BlockingWatch,
         60,
-        "BLOCKING_WATCH_IPS after enabling Wi-Fi",
-        |body| body.contains("wlan0:"),
+        "BLOCKING_WATCH_IPS after enabling Wi-Fi with IPv6",
+        |body| body.contains("wlan0:fe80::"),
     );
     expect_event(
         &rx,
         &mut pending_events,
         EventKind::AsyncWatch,
         60,
-        "ASYNC_WATCH_IPS after enabling Wi-Fi",
-        |body| body.contains("wlan0:"),
+        "ASYNC_WATCH_IPS after enabling Wi-Fi with IPv6",
+        |body| body.contains("wlan0:fe80::"),
     );
 
     set_wifi_enabled(false);

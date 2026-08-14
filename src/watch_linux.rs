@@ -21,7 +21,7 @@ const EVENT_SOCKET_OPS: crate::watch_fd::EventSocketOps = crate::watch_fd::Event
 };
 
 const RTMGRP_IPV4_IFADDR: u32 = 0x10;
-const RTMGRP_IPV6_IFADDR: u32 = 0x20;
+const RTMGRP_IPV6_IFADDR: u32 = 0x100;
 const RTMGRP_LINK: u32 = 0x01;
 
 pub(crate) fn watch_interfaces_with_callback<F: FnMut(Update) + Send + 'static>(

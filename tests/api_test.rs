@@ -1,6 +1,8 @@
 use netwatcher::{list_interfaces, IpRecord};
 #[cfg(any(windows, all(unix, not(target_os = "android"))))]
 use serial_test::serial;
+#[cfg(any(windows, all(unix, not(target_os = "android"))))]
+use std::net::Ipv6Addr;
 use std::net::{IpAddr, Ipv4Addr};
 
 #[cfg(any(windows, all(unix, not(target_os = "android"))))]
@@ -12,6 +14,10 @@ use std::time::Duration;
 
 #[cfg(any(windows, all(unix, not(target_os = "android"))))]
 mod helpers;
+
+#[cfg(any(windows, all(unix, not(target_os = "android"))))]
+#[path = "helpers/ipv6.rs"]
+mod ipv6_helpers;
 
 #[cfg(windows)]
 #[path = "helpers/windows_interface.rs"]
@@ -308,6 +314,88 @@ fn test_watch_interfaces_blocking_loopback_changes() {
     assert_update_has_ip(&added, &expected_added, true);
 
     remove_ip_from_interface(&loopback_interface, "127.0.0.10");
+    let removed = watch.changed();
+    assert!(!removed.is_initial);
+    assert_update_has_ip(&removed, &expected_original, true);
+    assert_update_has_ip(&removed, &expected_added, false);
+}
+
+#[test]
+#[ignore] // needs to run in administrator/root context
+#[cfg(any(windows, all(unix, not(target_os = "android"))))]
+#[serial(loopback)]
+fn test_watch_interfaces_callback_loopback_ipv6_changes() {
+    use helpers::sys::discover_loopback_interface;
+
+    let loopback_interface = discover_loopback_interface();
+    println!("discovered loopback interface: '{loopback_interface}'");
+
+    let expected_original = IpRecord {
+        ip: IpAddr::V6(Ipv6Addr::LOCALHOST),
+        prefix_len: 128,
+    };
+    let expected_added = IpRecord {
+        ip: IpAddr::V6("2001:db8::2".parse().unwrap()),
+        prefix_len: 128,
+    };
+
+    let (wait_for_callback, updates, _handle) = setup_callback_handler();
+
+    // Wait for initial callback and verify initial state
+    wait_for_callback(1);
+    assert_is_initial(&updates, 0, true);
+    assert_has_ip(&updates, 0, &expected_original, true);
+    assert_has_ip(&updates, 0, &expected_added, false);
+
+    // Add test IPv6 alias and verify both addresses are present
+    ipv6_helpers::add_ipv6_to_interface(&loopback_interface, "2001:db8::2");
+    wait_for_callback(2);
+    assert_is_initial(&updates, 1, false);
+    assert_has_ip(&updates, 1, &expected_original, true);
+    assert_has_ip(&updates, 1, &expected_added, true);
+
+    // Remove test IPv6 alias and verify only original remains
+    ipv6_helpers::remove_ipv6_from_interface(&loopback_interface, "2001:db8::2");
+    wait_for_callback(3);
+    assert_is_initial(&updates, 2, false);
+    assert_has_ip(&updates, 2, &expected_original, true);
+    assert_has_ip(&updates, 2, &expected_added, false);
+}
+
+#[test]
+#[ignore] // needs to run in administrator/root context
+#[cfg(any(windows, all(unix, not(target_os = "android"))))]
+#[serial(loopback)]
+fn test_watch_interfaces_blocking_loopback_ipv6_changes() {
+    use helpers::assert_update_has_ip;
+    use helpers::sys::discover_loopback_interface;
+
+    let loopback_interface = discover_loopback_interface();
+    println!("discovered loopback interface: '{loopback_interface}'");
+
+    let expected_original = IpRecord {
+        ip: IpAddr::V6(Ipv6Addr::LOCALHOST),
+        prefix_len: 128,
+    };
+    let expected_added = IpRecord {
+        ip: IpAddr::V6("2001:db8::2".parse().unwrap()),
+        prefix_len: 128,
+    };
+
+    let mut watch = watch_interfaces_blocking().expect("failed to create blocking watcher");
+
+    let initial = watch.changed();
+    assert!(initial.is_initial);
+    assert_update_has_ip(&initial, &expected_original, true);
+    assert_update_has_ip(&initial, &expected_added, false);
+
+    ipv6_helpers::add_ipv6_to_interface(&loopback_interface, "2001:db8::2");
+    let added = watch.changed();
+    assert!(!added.is_initial);
+    assert_update_has_ip(&added, &expected_original, true);
+    assert_update_has_ip(&added, &expected_added, true);
+
+    ipv6_helpers::remove_ipv6_from_interface(&loopback_interface, "2001:db8::2");
     let removed = watch.changed();
     assert!(!removed.is_initial);
     assert_update_has_ip(&removed, &expected_original, true);

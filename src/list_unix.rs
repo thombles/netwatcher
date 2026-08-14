@@ -74,17 +74,7 @@ pub(crate) fn list_interfaces() -> Result<List, Error> {
         .filter(|(_, c)| c.flags.contains(InterfaceFlags::IFF_UP))
         .map(|(_, mut c)| {
             // alias IPs on Mac do not get their own prefix len
-            if let Some(prefix_in_use) = c
-                .ips
-                .iter()
-                .filter(|cip| cip.ip.is_ipv4())
-                .flat_map(|cip| cip.prefix_len)
-                .next()
-            {
-                for cip in &mut c.ips {
-                    cip.prefix_len = Some(cip.prefix_len.unwrap_or(prefix_in_use));
-                }
-            }
+            apply_alias_prefix_fallback(&mut c.ips);
             let ips = c
                 .ips
                 .iter()
@@ -110,6 +100,31 @@ pub(crate) fn list_interfaces() -> Result<List, Error> {
     Ok(List(ifs))
 }
 
+// On macOS, alias addresses are not reported with their own netmask. Borrow a
+// prefix length from another address of the same family on the interface so
+// that aliases are not dropped. The fallback is applied per address family so
+// that an IPv6 address never inherits an IPv4 prefix.
+fn apply_alias_prefix_fallback(ips: &mut [CandidateIpRecord]) {
+    apply_fallback_for_family(ips, IpAddr::is_ipv4);
+    apply_fallback_for_family(ips, IpAddr::is_ipv6);
+}
+
+fn apply_fallback_for_family(
+    ips: &mut [CandidateIpRecord],
+    matches_family: impl Fn(&IpAddr) -> bool,
+) {
+    let prefix_in_use = ips
+        .iter()
+        .filter(|cip| matches_family(&cip.ip))
+        .find_map(|cip| cip.prefix_len);
+    let Some(prefix_in_use) = prefix_in_use else {
+        return;
+    };
+    for cip in ips.iter_mut().filter(|cip| matches_family(&cip.ip)) {
+        cip.prefix_len = Some(cip.prefix_len.unwrap_or(prefix_in_use));
+    }
+}
+
 fn format_mac(bytes: &[u8]) -> Result<String, Error> {
     let mut mac = String::with_capacity(bytes.len() * 3);
     for (i, b) in bytes.iter().enumerate() {
@@ -119,4 +134,65 @@ fn format_mac(bytes: &[u8]) -> Result<String, Error> {
         write!(mac, "{b:02X}").map_err(|_| Error::FormatMacAddress)?;
     }
     Ok(mac)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::{Ipv4Addr, Ipv6Addr};
+
+    fn record(ip: IpAddr, prefix_len: Option<u8>) -> CandidateIpRecord {
+        CandidateIpRecord { ip, prefix_len }
+    }
+
+    #[test]
+    fn ipv4_prefix_is_applied_to_ipv4_without_prefix() {
+        let mut ips = vec![
+            record(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)), Some(24)),
+            record(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 2)), None),
+        ];
+        apply_alias_prefix_fallback(&mut ips);
+        assert_eq!(ips[0].prefix_len, Some(24));
+        assert_eq!(ips[1].prefix_len, Some(24));
+    }
+
+    #[test]
+    fn ipv6_prefix_is_applied_to_ipv6_without_prefix() {
+        let mut ips = vec![
+            record(IpAddr::V6(Ipv6Addr::LOCALHOST), Some(128)),
+            record(IpAddr::V6("2001:db8::2".parse().unwrap()), None),
+        ];
+        apply_alias_prefix_fallback(&mut ips);
+        assert_eq!(ips[0].prefix_len, Some(128));
+        assert_eq!(ips[1].prefix_len, Some(128));
+    }
+
+    #[test]
+    fn ipv4_prefix_is_not_applied_to_ipv6() {
+        let mut ips = vec![
+            record(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)), Some(24)),
+            record(IpAddr::V6(Ipv6Addr::LOCALHOST), None),
+        ];
+        apply_alias_prefix_fallback(&mut ips);
+        assert_eq!(ips[0].prefix_len, Some(24));
+        assert_eq!(ips[1].prefix_len, None);
+    }
+
+    #[test]
+    fn existing_prefixes_are_preserved() {
+        let mut ips = vec![
+            record(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)), Some(24)),
+            record(IpAddr::V4(Ipv4Addr::new(198, 51, 100, 1)), Some(16)),
+            record(IpAddr::V6(Ipv6Addr::LOCALHOST), Some(128)),
+            record(
+                IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1)),
+                Some(64),
+            ),
+        ];
+        apply_alias_prefix_fallback(&mut ips);
+        assert_eq!(ips[0].prefix_len, Some(24));
+        assert_eq!(ips[1].prefix_len, Some(16));
+        assert_eq!(ips[2].prefix_len, Some(128));
+        assert_eq!(ips[3].prefix_len, Some(64));
+    }
 }
