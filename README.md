@@ -127,6 +127,8 @@ Ensure the app module which is going to end up running `netwatcher` has these pe
 
 You will also need to make sure that `netwatcher` gets access to the Android app's `Context`. There is built-in support for the [ndk-context](https://crates.io/crates/ndk-context) crate. What this means is that if you're using certain frameworks for building all-Rust Android apps then it will be able to pick up the context automatically. In other situations, the Rust code in your app will have to call `netwatcher::set_android_context` ([example code](https://github.com/thombles/netwatcher/blob/b58d2283f5a3f7a5c324946ba8e92407c0d8a2dd/android/app-native/src/lib.rs#L32-L44)).
 
+`set_android_context` stores the context for the lifetime of the process, so pass an application context (`applicationContext` in Kotlin, or `getApplicationContext()` in Java) rather than an `Activity`. An `Activity` would be retained after it is destroyed, leaking its view tree and resources.
+
 There is a test app included in the repo that provides a full example. [MainActivity.kt](https://github.com/thombles/netwatcher/blob/main/android/app/src/main/java/net/octet_stream/netwatcher/netwatchertestapp/MainActivity.kt) is an activity with some methods defined in Rust. [app-native/src/lib.rs](https://github.com/thombles/netwatcher/blob/main/android/app-native/src/lib.rs) provides the native implementations of those methods. This includes an example of calling `set_android_context`, and using the `netwatcher` library to watch for interface changes, passing the results back to the Java GUI.
 
 ## Licence

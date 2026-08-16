@@ -17,6 +17,10 @@ static ANDROID_CONTEXT: OnceLock<Mutex<Option<AndroidContext>>> = OnceLock::new(
 
 /// Sets the Android context for the netwatcher library.
 ///
+/// The context is stored as a strong global reference for the lifetime of the process, and is not
+/// released until it is replaced by a later call. Pass an application context rather than an
+/// `Activity`, which would otherwise be retained after it is destroyed.
+///
 /// # Safety
 ///
 /// This function is unsafe because it accepts raw pointers from the JNI layer.
