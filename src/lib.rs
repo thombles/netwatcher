@@ -448,16 +448,18 @@ pub fn list_interfaces() -> Result<HashMap<IfIndex, Interface>, Error> {
 /// If setting up the watch is successful, this returns a `WatchHandle` which must be kept for
 /// as long as the provided callback should operate.
 ///
-/// The callback will fire once immediately with an initial interface list, and a diff as if
-/// there were originally no interfaces present.
+/// The callback is invoked once, synchronously before this function returns, with an initial
+/// interface list and a diff as if there were originally no interfaces present. Subsequent
+/// callbacks, including any that race with initialisation, are delivered on a platform-defined
+/// thread that is not necessarily the thread that called this function, and may arrive before or
+/// after this function returns. Do not rely on a particular delivery thread or on the timing of
+/// later updates relative to this function returning.
 ///
-/// The initial callback and any catch-up callbacks for notifications racing initialisation are
-/// invoked synchronously before this function returns. Callbacks after initialisation execute from
-/// platform notification context. If the initial callback panics, watcher construction unwinds and
-/// no watcher remains registered. With the default unwinding panic strategy, a later callback panic
-/// is contained and permanently disables that callback watcher without affecting other watchers.
-/// The panic hook still runs, and the returned handle remains safe to drop. With `panic = "abort"`,
-/// any panic still aborts the process.
+/// If the initial callback panics, watcher construction unwinds and no watcher remains registered.
+/// With the default unwinding panic strategy, a later callback panic is contained and permanently
+/// disables that callback watcher without affecting other watchers. The panic hook still runs, and
+/// the returned handle remains safe to drop. With `panic = "abort"`, any panic still aborts the
+/// process.
 ///
 /// This function will return an error if there is a problem configuring the watcher, or if there
 /// is an error retrieving the initial interface list.
