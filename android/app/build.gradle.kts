@@ -49,7 +49,7 @@ cargo {
     module = "../app-native"
     libname = "netwatcher_app_native"
     targets = listOf("arm64", "arm", "x86", "x86_64")
-    profile = "debug"
+    profile = if (gradle.startParameter.taskNames.any { it.contains("Release", ignoreCase = true) }) "release" else "debug"
 }
 
 tasks.whenTaskAdded {
