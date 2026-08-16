@@ -22,7 +22,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         
         // Pass down Android context via the app-specific native Rust code
-        setAndroidContext(this)
+        setAndroidContext(applicationContext)
         
         // Start watching interfaces
         startWatching(object : InterfaceChangeCallback {
