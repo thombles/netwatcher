@@ -336,6 +336,7 @@ fn expect_event(
                 continue;
             }
             if predicate(&event.body) {
+                remaining_events.append(pending_events);
                 *pending_events = remaining_events;
                 return;
             }
