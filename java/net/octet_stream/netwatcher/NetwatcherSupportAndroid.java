@@ -36,6 +36,8 @@ public class NetwatcherSupportAndroid {
         }
         NetworkRequest networkRequest = new NetworkRequest.Builder()
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)
+                .removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+                .removeCapability(NetworkCapabilities.NET_CAPABILITY_TRUSTED)
                 .build();
         networkCallback = new ConnectivityManager.NetworkCallback() {
             @Override
