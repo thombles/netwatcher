@@ -154,7 +154,16 @@ fn android_list_and_watch_apis() {
     );
 }
 
-fn spawn_logcat_watcher() -> (Receiver<Event>, Child) {
+struct LogcatChild(Child);
+
+impl Drop for LogcatChild {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+fn spawn_logcat_watcher() -> (Receiver<Event>, LogcatChild) {
     let mut child = Command::new("adb")
         .args(["logcat", "-v", "brief"])
         .stdout(Stdio::piped())
@@ -189,7 +198,7 @@ fn spawn_logcat_watcher() -> (Receiver<Event>, Child) {
         }
     });
 
-    (rx, child)
+    (rx, LogcatChild(child))
 }
 
 fn parse_log_line(line: &str) -> Option<Event> {
