@@ -46,16 +46,18 @@ impl AsyncWatch {
         }
 
         loop {
-            let mut ready = match self.registration.readable().await {
-                Ok(ready) => ready,
+            let drain_event_socket = self.drain_event_socket;
+            let readiness = self
+                .registration
+                .readable_and_drain(&mut |fd| drain_event_socket(fd.as_fd()))
+                .await;
+            match readiness {
+                Ok(()) => {}
                 Err(_) => {
                     self.readiness_failed = true;
                     return std::future::pending().await;
                 }
-            };
-
-            (self.drain_event_socket)(ready.fd().as_fd());
-            ready.clear_ready();
+            }
 
             let Ok(new_list) = crate::list::list_interfaces() else {
                 continue;
